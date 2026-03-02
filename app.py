@@ -1,6 +1,7 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import requests
 from datetime import datetime, timedelta, time
 
 # 画面のタイトル
@@ -8,11 +9,30 @@ st.title("FX レート＆シグナル アラート 🚀")
 st.write("設定したいアラートの条件を組み立ててください。")
 
 # --- 一時メモ機能（セッション・ステート）の準備 ---
-# ここでアラートの回数や、開始した日時を一時的に記憶します
 if 'alert_count' not in st.session_state:
     st.session_state.alert_count = 0
 if 'start_time' not in st.session_state:
     st.session_state.start_time = None
+
+# --- LINE通知用の関数（お助け機能） ---
+def send_line_message(token, user_id, message_text):
+    url = "https://api.line.me/v2/bot/message/push"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}"
+    }
+    data = {
+        "to": user_id,
+        "messages": [{"type": "text", "text": message_text}]
+    }
+    response = requests.post(url, headers=headers, json=data)
+    return response
+
+# --- セキュリティ設定：画面の横（サイドバー）に鍵の入力欄を作る ---
+st.sidebar.header("🔐 LINE Bot連携設定")
+st.sidebar.write("※セキュリティのため、ここに直接入力してテストします")
+line_token = st.sidebar.text_input("チャネルアクセストークン", type="password")
+line_user_id = st.sidebar.text_input("ユーザーID (Uから始まるもの)", type="password")
 
 # --- 選択肢のデータ準備 ---
 pairs = {
@@ -40,7 +60,6 @@ with col1:
 with col2:
     selected_tf = st.selectbox("(2) 時間足", timeframes)
 
-# (4) の選択肢を「交差」を追加した3択に変更
 conditions_list = ["上回る", "下回る", "交差"]
 
 if alert_type == "① 価格 × 価格アラート":
@@ -71,24 +90,20 @@ elif alert_type == "③ 条件 × 条件アラート":
 st.write("---")
 st.subheader("制限の設定")
 
-# アラートの回数と時間制限の設定画面
 col6, col7 = st.columns(2)
 with col6:
     max_alerts = st.number_input("アラートの最大通知回数", min_value=1, value=1)
 with col7:
     time_limit_type = st.selectbox("時間制限", ["制限なし", "指定時間まで", "指定時間以降"])
 
-# 時間制限が選ばれた場合のみ、時間を入力する枠を出します
 limit_time = None
 if time_limit_type != "制限なし":
-    limit_time = st.time_input("時間を指定してください", value=time(15, 0)) # 初期値は15:00
+    limit_time = st.time_input("時間を指定してください", value=time(15, 0))
 
-# 1週間で無効になることの案内
 st.info("💡 設定後、1週間（7日間）経過すると自動的にアラートは無効になります。")
 
 st.write("---")
 
-# リセットボタン（テスト用に記憶をゼロに戻すボタン）
 if st.button("記憶をリセットして新しく設定する"):
     st.session_state.alert_count = 0
     st.session_state.start_time = None
@@ -98,36 +113,33 @@ if st.button("記憶をリセットして新しく設定する"):
 is_invalid = (alert_type == "③ 条件 × 条件アラート" and sma1 == sma2)
 
 if st.button("この条件で現在の状況をチェック！", disabled=is_invalid):
-    # --- 制限のチェック ---
-    # サーバーの時間は世界標準時(UTC)なので、9時間足して日本時間(JST)にします
+    # LINEの鍵が入力されているかチェック
+    if not line_token or not line_user_id:
+        st.warning("⚠️ 画面左上の「>」を押して、サイドバーにLINEのトークンとユーザーIDを入力してください。")
+        st.stop()
+
     now_jst = datetime.utcnow() + timedelta(hours=9)
     
-    # 1. 1週間期限のチェック
     if st.session_state.start_time is None:
-        st.session_state.start_time = now_jst # 初めて押した時に時間を記録
+        st.session_state.start_time = now_jst
     
     time_elapsed = now_jst - st.session_state.start_time
     if time_elapsed > timedelta(days=7):
-        st.error("期限切れ：設定から1週間が経過したため、アラートは無効になりました。リセットしてください。")
-        st.stop() # ここでプログラムを止めます
-
-    # 2. 回数制限のチェック
-    if st.session_state.alert_count >= max_alerts:
-        st.error(f"回数制限：すでに上限（{max_alerts}回）までアラートを通知しました。")
+        st.error("期限切れ：設定から1週間が経過したため、アラートは無効になりました。")
         st.stop()
 
-    # 3. 時間制限のチェック
-    current_time_only = now_jst.time()
-    if time_limit_type == "指定時間まで":
-        if current_time_only > limit_time:
-            st.warning(f"時間外：現在は指定時間（{limit_time}）を過ぎているため監視をお休みしています。")
-            st.stop()
-    elif time_limit_type == "指定時間以降":
-        if current_time_only < limit_time:
-            st.warning(f"時間外：指定時間（{limit_time}）になるまで監視をお休みしています。")
-            st.stop()
+    if st.session_state.alert_count >= max_alerts:
+        st.error(f"回数制限：すでに上限（{max_alerts}回）まで通知しました。")
+        st.stop()
 
-    # --- これ以降は前回のデータ取得・判定処理と同じです ---
+    current_time_only = now_jst.time()
+    if time_limit_type == "指定時間まで" and current_time_only > limit_time:
+        st.warning(f"時間外：現在は指定時間（{limit_time}）を過ぎています。")
+        st.stop()
+    elif time_limit_type == "指定時間以降" and current_time_only < limit_time:
+        st.warning(f"時間外：指定時間（{limit_time}）になるまでお待ちください。")
+        st.stop()
+
     ticker = pairs[selected_pair]
     st.info(f"データ取得中: {selected_pair} / {selected_tf}...")
     
@@ -168,11 +180,9 @@ if st.button("この条件で現在の状況をチェック！", disabled=is_inv
 
             is_alert = False
 
-            # 「交差」の判定（上抜け、または下抜けのどちらかであればTrue）
             def check_cross(prev_val1, curr_val1, prev_val2, curr_val2, mode):
                 cross_up = (prev_val1 <= prev_val2 and curr_val1 > curr_val2)
                 cross_down = (prev_val1 >= prev_val2 and curr_val1 < curr_val2)
-                
                 if mode == "上回る": return cross_up
                 elif mode == "下回る": return cross_down
                 elif mode == "交差": return cross_up or cross_down
@@ -186,10 +196,22 @@ if st.button("この条件で現在の状況をチェック！", disabled=is_inv
                 is_alert = check_cross(prev_sma[sma1], curr_sma[sma1], prev_sma[sma2], curr_sma[sma2], direction)
 
             if is_alert:
-                st.session_state.alert_count += 1 # アラート回数を1増やす
-                st.error(f"🚨【アラート発動】設定した条件を満たしました！ (現在の通知回数: {st.session_state.alert_count}/{max_alerts})")
+                st.session_state.alert_count += 1
+                
+                # --- LINEへ送信するメッセージの作成 ---
+                msg = f"🚨【FXアラート発動】\n通貨ペア: {selected_pair}\n時間足: {selected_tf}\n現在の価格: {curr_price:.3f}\n条件: {direction}"
+                
+                # LINE送信処理の実行
+                response = send_line_message(line_token, line_user_id, msg)
+                
+                if response.status_code == 200:
+                    st.success("✅ LINEへの通知も成功しました！")
+                else:
+                    st.error(f"❌ LINE通知に失敗しました。トークンやIDを確認してください。 (エラーコード: {response.status_code})")
+                    
+                st.error(f"🚨 条件を満たしました！ (通知回数: {st.session_state.alert_count}/{max_alerts})")
             else:
-                st.success(f"✅ 現在、設定したアラート条件は満たしていません。(現在の通知回数: {st.session_state.alert_count}/{max_alerts})")
+                st.success(f"✅ 現在は条件を満たしていません。(通知回数: {st.session_state.alert_count}/{max_alerts})")
 
     except Exception as e:
         st.error(f"エラーが発生しました: {e}")

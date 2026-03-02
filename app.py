@@ -10,23 +10,23 @@ st.write("設定したいアラートの条件を組み立ててください。"
 
 # (1) 通貨ペアの選択肢（17種類）
 pairs = {
-    "ドル円": "USDJPY=X",
-    "ユーロ円": "EURJPY=X",
-    "ポンド円": "GBPJPY=X",
-    "ユーロドル": "EURUSD=X",
-    "ポンドドル": "GBPUSD=X",
-    "ユーロポンド": "EURGBP=X",
-    "オージードル円": "AUDJPY=X",
-    "カナダ円": "CADJPY=X",
-    "スイスフラン円": "CHFJPY=X",
-    "ポンドオージードル": "GBPAUD=X",
-    "オージードル×米ドル": "AUDUSD=X",
-    "ドルカナダ": "USDCAD=X",
-    "ドルスイスフラン": "USDCHF=X",
-    "ユーロ": "EUR=X",
-    "オージードル": "AUD=X",
-    "金": "GC=F",
-    "銀": "SI=F"
+ "USDJPY=X",
+"EURJPY=X",
+"GBPJPY=X",
+ "EURUSD=X",
+"GBPUSD=X",
+ "EURGBP=X",
+"AUDJPY=X",
+ "CADJPY=X",
+ "CHFJPY=X",
+"GBPAUD=X",
+ "AUDUSD=X",
+"USDCAD=X",
+"USDCHF=X",
+"EUR=X",
+"AUD=X",
+"GC=F",
+ "SI=F"
 }
 
 # (2) 時間足の選択肢（4種類）

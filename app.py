@@ -2,39 +2,28 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import requests
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta
 
-# 画面のタイトル
+# --- 画面のタイトルと初期設定 ---
 st.title("FX レート＆シグナル アラート 🚀")
-st.write("設定したいアラートの条件を組み立ててください。")
+st.write("複数のアラートを組み合わせて登録しましょう！（最大5個）")
 
-# --- 一時メモ機能（セッション・ステート）の準備 ---
-if 'alert_count' not in st.session_state:
-    st.session_state.alert_count = 0
-if 'start_time' not in st.session_state:
-    st.session_state.start_time = None
+# アラートを保存する「バインダー（リスト）」を準備します
+if 'alerts_list' not in st.session_state:
+    st.session_state.alerts_list = []
 
-# --- LINE通知用の関数（お助け機能） ---
+# --- LINE通知用の関数 ---
 def send_line_message(token, user_id, message_text):
     url = "https://api.line.me/v2/bot/message/push"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {token}"
-    }
-    data = {
-        "to": user_id,
-        "messages": [{"type": "text", "text": message_text}]
-    }
-    response = requests.post(url, headers=headers, json=data)
-    return response
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
+    data = {"to": user_id, "messages": [{"type": "text", "text": message_text}]}
+    return requests.post(url, headers=headers, json=data)
 
-# --- セキュリティ設定：画面の横（サイドバー）に鍵の入力欄を作る ---
 st.sidebar.header("🔐 LINE Bot連携設定")
-st.sidebar.write("※セキュリティのため、ここに直接入力してテストします")
 line_token = st.sidebar.text_input("チャネルアクセストークン", type="password")
 line_user_id = st.sidebar.text_input("ユーザーID (Uから始まるもの)", type="password")
 
-# --- 選択肢のデータ準備 ---
+# --- データ定義 ---
 pairs = {
     "USDJPY": "USDJPY=X", "EURJPY": "EURJPY=X", "GBPJPY": "GBPJPY=X",
     "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "EURGBP": "EURGBP=X",
@@ -44,174 +33,152 @@ pairs = {
     "GOLD": "GC=F", "SILVER": "SI=F"
 }
 timeframes = ["5分足", "15分足", "1時間足", "4時間足"]
-
-# --- 画面のレイアウト作成 ---
-st.subheader("条件の設定")
-
-alert_type = st.radio(
-    "アラートの種類を選択してください",
-    ("① 価格 × 価格アラート", "② 価格 × 条件アラート", "③ 条件 × 条件アラート")
-)
-
-st.write("---")
-col1, col2 = st.columns(2)
-with col1:
-    selected_pair = st.selectbox("(1) 通貨ペア", list(pairs.keys()))
-with col2:
-    selected_tf = st.selectbox("(2) 時間足", timeframes)
-
 conditions_list = ["上回る", "下回る", "交差"]
 
-if alert_type == "① 価格 × 価格アラート":
-    col3, col4 = st.columns(2)
-    with col3:
-        target_price = st.number_input("(3) 目標レートを入力", value=150.000, step=0.01)
-    with col4:
-        direction = st.selectbox("(4) アラート条件", conditions_list)
+# --- 条件入力画面を作る「お助け機能（関数）」 ---
+# 同じ画面を「条件A」と「条件B」で2回使い回すための工夫です
+def render_condition_ui(prefix_key):
+    alert_type = st.radio(f"アラートの種類", ("① 価格×価格", "② 価格×SMA", "③ SMA×SMA"), key=f"{prefix_key}_type")
+    
+    col_a, col_b = st.columns(2)
+    settings = {"type": alert_type}
+    
+    if alert_type == "① 価格×価格":
+        with col_a: settings["target_price"] = st.number_input("目標レート", value=150.00, step=0.01, key=f"{prefix_key}_p")
+        with col_b: settings["direction"] = st.selectbox("条件", conditions_list, key=f"{prefix_key}_d")
+    elif alert_type == "② 価格×SMA":
+        with col_a: settings["target_sma"] = st.selectbox("比較するSMA", ["SMA6", "SMA25", "SMA100"], key=f"{prefix_key}_s")
+        with col_b: settings["direction"] = st.selectbox("条件", conditions_list, key=f"{prefix_key}_d")
+    elif alert_type == "③ SMA×SMA":
+        col_c, col_d, col_e = st.columns(3)
+        with col_c: settings["sma1"] = st.selectbox("SMA (1つ目)", ["SMA6", "SMA25", "SMA100"], index=0, key=f"{prefix_key}_s1")
+        with col_d: settings["sma2"] = st.selectbox("SMA (2つ目)", ["SMA6", "SMA25", "SMA100"], index=1, key=f"{prefix_key}_s2")
+        with col_e: settings["direction"] = st.selectbox("条件", conditions_list, key=f"{prefix_key}_d")
+        if settings["sma1"] == settings["sma2"]: st.warning("⚠️ 同じSMAが選ばれています")
+            
+    return settings
 
-elif alert_type == "② 価格 × 条件アラート":
-    col3, col4 = st.columns(2)
-    with col3:
-        target_sma = st.selectbox("(3') 比較するSMA", ["SMA6", "SMA25", "SMA100"])
-    with col4:
-        direction = st.selectbox("(4) アラート条件", conditions_list)
-
-elif alert_type == "③ 条件 × 条件アラート":
-    col3, col4, col5 = st.columns(3)
-    with col3:
-        sma1 = st.selectbox("(3') SMA (1つ目)", ["SMA6", "SMA25", "SMA100"], index=0)
-    with col4:
-        sma2 = st.selectbox("(3\") SMA (2つ目)", ["SMA6", "SMA25", "SMA100"], index=1)
-    with col5:
-        direction = st.selectbox("(4) アラート条件", conditions_list)
-    if sma1 == sma2:
-        st.error("⚠️ (3')と(3\")が同じSMAです。別の組み合わせを選択してください。")
-
+# --- アラート追加コーナー ---
 st.write("---")
-st.subheader("制限の設定")
+st.subheader("📥 新しいアラートを作成")
 
-col6, col7 = st.columns(2)
-with col6:
-    max_alerts = st.number_input("アラートの最大通知回数", min_value=1, value=1)
-with col7:
-    time_limit_type = st.selectbox("時間制限", ["制限なし", "指定時間まで", "指定時間以降"])
+with st.expander("ここをタップしてアラートを設定する", expanded=True):
+    selected_pair = st.selectbox("対象の通貨ペア", list(pairs.keys()))
+    selected_tf = st.selectbox("時間足", timeframes)
+    
+    st.write("**【条件 A】**")
+    cond_a = render_condition_ui("condA")
+    
+    # かつ・または の組み合わせ選択
+    logic_operator = st.radio("条件の組み合わせ", ["組み合わせない（条件Aのみ）", "AND（条件A かつ 条件B）", "OR（条件A または 条件B）"])
+    
+    cond_b = None
+    if logic_operator != "組み合わせない（条件Aのみ）":
+        st.write("**【条件 B】**")
+        cond_b = render_condition_ui("condB")
+    
+    # 登録ボタン
+    if st.button("このアラートをリストに追加する ➕"):
+        if len(st.session_state.alerts_list) >= 5:
+            st.error("登録できるアラートは最大5個までです！")
+        else:
+            new_alert = {
+                "pair": selected_pair,
+                "tf": selected_tf,
+                "cond_a": cond_a,
+                "logic": logic_operator,
+                "cond_b": cond_b
+            }
+            st.session_state.alerts_list.append(new_alert)
+            st.success(f"{selected_pair} のアラートを登録しました！ (現在 {len(st.session_state.alerts_list)}/5個)")
 
-limit_time = None
-if time_limit_type != "制限なし":
-    limit_time = st.time_input("時間を指定してください", value=time(15, 0))
-
-st.info("💡 設定後、1週間（7日間）経過すると自動的にアラートは無効になります。")
-
+# --- 登録済みアラートの確認と実行コーナー ---
 st.write("---")
+st.subheader("📋 登録済みのアラート一覧")
 
-if st.button("記憶をリセットして新しく設定する"):
-    st.session_state.alert_count = 0
-    st.session_state.start_time = None
-    st.success("設定と記憶をリセットしました！")
-
-# --- 裏側のデータ取得・計算処理 ---
-is_invalid = (alert_type == "③ 条件 × 条件アラート" and sma1 == sma2)
-
-if st.button("この条件で現在の状況をチェック！", disabled=is_invalid):
-    # LINEの鍵が入力されているかチェック
-    if not line_token or not line_user_id:
-        st.warning("⚠️ 画面左上の「>」を押して、サイドバーにLINEのトークンとユーザーIDを入力してください。")
-        st.stop()
-
-    now_jst = datetime.utcnow() + timedelta(hours=9)
+if len(st.session_state.alerts_list) == 0:
+    st.info("現在登録されているアラートはありません。")
+else:
+    for i, alert in enumerate(st.session_state.alerts_list):
+        st.write(f"**アラート {i+1}**: {alert['pair']} ({alert['tf']}) - 組み合わせ: {alert['logic']}")
     
-    if st.session_state.start_time is None:
-        st.session_state.start_time = now_jst
-    
-    time_elapsed = now_jst - st.session_state.start_time
-    if time_elapsed > timedelta(days=7):
-        st.error("期限切れ：設定から1週間が経過したため、アラートは無効になりました。")
-        st.stop()
+    if st.button("リストをすべてリセットする 🗑️"):
+        st.session_state.alerts_list = []
+        st.success("すべてのアラートを削除しました。")
 
-    if st.session_state.alert_count >= max_alerts:
-        st.error(f"回数制限：すでに上限（{max_alerts}回）まで通知しました。")
-        st.stop()
+    st.write("---")
+    # ここがメインのチェックボタンです
+    if st.button("▶️ 登録されたすべてのアラートをチェック！"):
+        if not line_token or not line_user_id:
+            st.warning("⚠️ サイドバーにLINEのトークンとユーザーIDを入力してください。")
+            st.stop()
 
-    current_time_only = now_jst.time()
-    if time_limit_type == "指定時間まで" and current_time_only > limit_time:
-        st.warning(f"時間外：現在は指定時間（{limit_time}）を過ぎています。")
-        st.stop()
-    elif time_limit_type == "指定時間以降" and current_time_only < limit_time:
-        st.warning(f"時間外：指定時間（{limit_time}）になるまでお待ちください。")
-        st.stop()
+        # 交差チェック用のお助け機能
+        def check_cross(prev1, curr1, prev2, curr2, mode):
+            up = (prev1 <= prev2 and curr1 > curr2)
+            down = (prev1 >= prev2 and curr1 < curr2)
+            if mode == "上回る": return up
+            if mode == "下回る": return down
+            if mode == "交差": return up or down
+            return False
 
-    ticker = pairs[selected_pair]
-    st.info(f"データ取得中: {selected_pair} / {selected_tf}...")
-    
-    try:
-        if selected_tf == "4時間足":
-            data = yf.download(ticker, period="60d", interval="1h", progress=False)
-            if not data.empty:
-                data = data.resample('4h').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last'}).dropna()
-        else:
-            tf_map = {"5分足": "5m", "15分足": "15m", "1時間足": "1h"}
-            data = yf.download(ticker, period="60d", interval=tf_map[selected_tf], progress=False)
+        # 判定用のお助け機能（条件Aや条件Bを計算します）
+        def evaluate_condition(cond, curr_p, prev_p, curr_s, prev_s):
+            if cond["type"] == "① 価格×価格":
+                return check_cross(prev_p, curr_p, cond["target_price"], cond["target_price"], cond["direction"])
+            elif cond["type"] == "② 価格×SMA":
+                return check_cross(prev_p, curr_p, prev_s[cond["target_sma"]], curr_s[cond["target_sma"]], cond["direction"])
+            elif cond["type"] == "③ SMA×SMA":
+                return check_cross(prev_s[cond["sma1"]], curr_s[cond["sma1"]], prev_s[cond["sma2"]], curr_s[cond["sma2"]], cond["direction"])
+            return False
 
-        if data.empty:
-            st.error("データの取得に失敗しました。時間をおいて再度お試しください。")
-        else:
-            data['SMA6'] = data['Close'].rolling(window=6).mean()
-            data['SMA25'] = data['Close'].rolling(window=25).mean()
-            data['SMA100'] = data['Close'].rolling(window=100).mean()
-
-            latest = data.iloc[-1]
-            previous = data.iloc[-2]
-
-            def get_val(row, column):
-                val = row[column]
-                return float(val.iloc[0]) if isinstance(val, pd.Series) else float(val)
-
-            curr_price = get_val(latest, 'Close')
-            prev_price = get_val(previous, 'Close')
-            curr_sma = {"SMA6": get_val(latest, 'SMA6'), "SMA25": get_val(latest, 'SMA25'), "SMA100": get_val(latest, 'SMA100')}
-            prev_sma = {"SMA6": get_val(previous, 'SMA6'), "SMA25": get_val(previous, 'SMA25'), "SMA100": get_val(previous, 'SMA100')}
-
-            st.write("### 現在のデータ")
-            colA, colB, colC, colD = st.columns(4)
-            colA.metric("現在の価格", f"{curr_price:.3f}")
-            colB.metric("SMA6", f"{curr_sma['SMA6']:.3f}")
-            colC.metric("SMA25", f"{curr_sma['SMA25']:.3f}")
-            colD.metric("SMA100", f"{curr_sma['SMA100']:.3f}")
-
-            is_alert = False
-
-            def check_cross(prev_val1, curr_val1, prev_val2, curr_val2, mode):
-                cross_up = (prev_val1 <= prev_val2 and curr_val1 > curr_val2)
-                cross_down = (prev_val1 >= prev_val2 and curr_val1 < curr_val2)
-                if mode == "上回る": return cross_up
-                elif mode == "下回る": return cross_down
-                elif mode == "交差": return cross_up or cross_down
-                return False
-
-            if alert_type == "① 価格 × 価格アラート":
-                is_alert = check_cross(prev_price, curr_price, target_price, target_price, direction)
-            elif alert_type == "② 価格 × 条件アラート":
-                is_alert = check_cross(prev_price, curr_price, prev_sma[target_sma], curr_sma[target_sma], direction)
-            elif alert_type == "③ 条件 × 条件アラート":
-                is_alert = check_cross(prev_sma[sma1], curr_sma[sma1], prev_sma[sma2], curr_sma[sma2], direction)
-
-            if is_alert:
-                st.session_state.alert_count += 1
-                
-                # --- LINEへ送信するメッセージの作成 ---
-                msg = f"🚨【FXアラート発動】\n通貨ペア: {selected_pair}\n時間足: {selected_tf}\n現在の価格: {curr_price:.3f}\n条件: {direction}"
-                
-                # LINE送信処理の実行
-                response = send_line_message(line_token, line_user_id, msg)
-                
-                if response.status_code == 200:
-                    st.success("✅ LINEへの通知も成功しました！")
+        # リストの中身を1つずつ順番にチェックします
+        for i, alert in enumerate(st.session_state.alerts_list):
+            st.write(f"🔍 アラート {i+1} ({alert['pair']}) をチェック中...")
+            ticker = pairs[alert['pair']]
+            
+            # データ取得
+            try:
+                if alert['tf'] == "4時間足":
+                    data = yf.download(ticker, period="60d", interval="1h", progress=False)
+                    data = data.resample('4h').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last'}).dropna()
                 else:
-                    st.error(f"❌ LINE通知に失敗しました。トークンやIDを確認してください。 (エラーコード: {response.status_code})")
-                    
-                st.error(f"🚨 条件を満たしました！ (通知回数: {st.session_state.alert_count}/{max_alerts})")
-            else:
-                st.success(f"✅ 現在は条件を満たしていません。(通知回数: {st.session_state.alert_count}/{max_alerts})")
+                    tf_map = {"5分足": "5m", "15分足": "15m", "1時間足": "1h"}
+                    data = yf.download(ticker, period="60d", interval=tf_map[alert['tf']], progress=False)
 
-    except Exception as e:
-        st.error(f"エラーが発生しました: {e}")
+                if data.empty:
+                    st.error("データ取得失敗")
+                    continue
+
+                data['SMA6'] = data['Close'].rolling(window=6).mean()
+                data['SMA25'] = data['Close'].rolling(window=25).mean()
+                data['SMA100'] = data['Close'].rolling(window=100).mean()
+
+                latest, previous = data.iloc[-1], data.iloc[-2]
+                def gv(r, c): return float(r[c].iloc[0]) if isinstance(r[c], pd.Series) else float(r[c])
+                
+                cp, pp = gv(latest, 'Close'), gv(previous, 'Close')
+                cs = {"SMA6": gv(latest, 'SMA6'), "SMA25": gv(latest, 'SMA25'), "SMA100": gv(latest, 'SMA100')}
+                ps = {"SMA6": gv(previous, 'SMA6'), "SMA25": gv(previous, 'SMA25'), "SMA100": gv(previous, 'SMA100')}
+
+                # 条件Aの判定
+                result_a = evaluate_condition(alert['cond_a'], cp, pp, cs, ps)
+                
+                # 最終的な判定（AND / OR の計算）
+                final_result = result_a
+                if alert['logic'] == "AND（条件A かつ 条件B）":
+                    result_b = evaluate_condition(alert['cond_b'], cp, pp, cs, ps)
+                    final_result = result_a and result_b  # 両方TrueならTrue
+                elif alert['logic'] == "OR（条件A または 条件B）":
+                    result_b = evaluate_condition(alert['cond_b'], cp, pp, cs, ps)
+                    final_result = result_a or result_b   # どちらかがTrueならTrue
+
+                if final_result:
+                    msg = f"🚨【アラート {i+1} 発動】\n{alert['pair']} ({alert['tf']})\n現在価格: {cp:.3f}\n条件を満たしました！"
+                    send_line_message(line_token, line_user_id, msg)
+                    st.error(f"🚨 アラート {i+1}: 条件達成！LINEに通知しました。")
+                else:
+                    st.success(f"✅ アラート {i+1}: 条件は満たしていません。")
+
+            except Exception as e:
+                st.error(f"アラート {i+1} でエラー: {e}")

@@ -1,5 +1,7 @@
 import streamlit as st
 import requests
+import yfinance as yf
+import pandas as pd
 from datetime import datetime, timedelta
 
 st.set_page_config(page_title="FX 自動アラート", layout="wide")
@@ -7,11 +9,31 @@ st.title("FX レート＆シグナル アラート 🚀")
 st.write("ここで設定した条件を、ロボットが自動で監視します！（最大10個）")
 
 # --- 金庫（Secrets）から鍵を自動で取り出す ---
-# （もしエラーが出ないよう、空っぽの場合は空文字を入れる安全設計です）
 line_token = st.secrets.get("LINE_TOKEN", "")
 line_user_id = st.secrets.get("LINE_USER_ID", "")
 jsonbin_id = st.secrets.get("JSONBIN_BIN_ID", "")
 jsonbin_key = st.secrets.get("JSONBIN_API_KEY", "")
+
+# --- お助け機能：LINE開通テスト用の送信 ---
+def send_test_line(msg):
+    if not line_token or not line_user_id:
+        return False, "金庫(Secrets)にLINEの鍵が設定されていません。"
+    url = "https://api.line.me/v2/bot/message/push"
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {line_token}"}
+    res = requests.post(url, headers=headers, json={"to": line_user_id, "messages": [{"type": "text", "text": msg}]})
+    if res.status_code == 200:
+        return True, "送信成功"
+    else:
+        return False, f"エラーが発生しました ({res.status_code})"
+
+# --- サイドバー：LINE連携テストボタン ---
+st.sidebar.header("🛠️ 連携テスト")
+if st.sidebar.button("LINE開通テストを送信 ✉️"):
+    success, info = send_test_line("✅ 【テスト通知】FXアラートのLINE連携が正常に完了しています！")
+    if success:
+        st.sidebar.success("テストLINEを送信しました！スマホをご確認ください。")
+    else:
+        st.sidebar.error(f"送信失敗: {info}")
 
 # --- 共有ポスト（JSONBin）との通信機能 ---
 def load_alerts():
@@ -28,14 +50,43 @@ def save_alerts(alerts):
     res = requests.put(url, headers=headers, json={"alerts": alerts})
     return res.status_code == 200
 
-# 🌟 ここが進化ポイント！アプリを開いた瞬間に自動で読み込みます
 if 'alerts_list' not in st.session_state:
     st.session_state.alerts_list = load_alerts()
 
-pairs = ["USDJPY", "EURJPY", "GBPJPY", "EURUSD", "GBPUSD", "EURGBP", "AUDJPY", "CADJPY", "CHFJPY", "GBPAUD", "AUDUSD", "USDCAD", "USDCHF", "EUR", "AUD", "GOLD", "SILVER"]
+# 通貨ペアとデータ取得用記号（ティッカー）の辞書
+tickers_dict = {
+    "USDJPY": "USDJPY=X", "EURJPY": "EURJPY=X", "GBPJPY": "GBPJPY=X",
+    "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "EURGBP": "EURGBP=X",
+    "AUDJPY": "AUDJPY=X", "CADJPY": "CADJPY=X", "CHFJPY": "CHFJPY=X",
+    "GBPAUD": "GBPAUD=X", "AUDUSD": "AUDUSD=X", "USDCAD": "USDCAD=X",
+    "USDCHF": "USDCHF=X", "EUR": "EUR=X", "AUD": "AUD=X",
+    "GOLD": "GC=F", "SILVER": "SI=F"
+}
 timeframes = ["5分足", "15分足", "1時間足", "4時間足"]
 conditions_list = ["上回る", "下回る", "交差"]
 
+# --- 🌟 新機能：現在のレートを確認 ---
+st.write("---")
+st.subheader("💱 現在のレートを確認")
+
+check_pair = st.selectbox("確認したい通貨ペアを選択", list(tickers_dict.keys()), key="rate_check_pair")
+
+if st.button("現在のレートを確認 🔍"):
+    ticker_symbol = tickers_dict[check_pair]
+    st.info(f"{check_pair} の最新データを取得中...")
+    try:
+        # 直近の最新データを取得
+        data = yf.download(ticker_symbol, period="1d", interval="15m", progress=False)
+        if not data.empty:
+            # データをきれいな数字（小数第5位）にする
+            latest_close = float(data.iloc[-1]['Close'].iloc[0]) if isinstance(data.iloc[-1]['Close'], pd.Series) else float(data.iloc[-1]['Close'])
+            st.success(f"**{check_pair} の現在価格:** {latest_close:.5f}")
+        else:
+            st.error("データの取得に失敗しました。時間をおいてお試しください。")
+    except Exception as e:
+        st.error(f"エラーが発生しました: {e}")
+
+# --- アラート作成画面 ---
 def render_condition_ui(prefix_key):
     alert_type = st.radio("種類", ("① 価格×価格", "② 価格×SMA", "③ SMA×SMA"), key=f"{prefix_key}_type")
     col_a, col_b = st.columns(2)
@@ -55,7 +106,7 @@ def render_condition_ui(prefix_key):
 st.write("---")
 st.subheader("📥 新しいアラートを作成")
 
-selected_pair = st.selectbox("通貨ペア", pairs)
+selected_pair = st.selectbox("通貨ペア", list(tickers_dict.keys()), key="alert_pair")
 selected_tf = st.selectbox("時間足", timeframes)
 
 st.write("**【条件 A】**")

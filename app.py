@@ -26,7 +26,6 @@ def send_test_line(msg):
     else:
         return False, f"エラーが発生しました ({res.status_code})"
 
-# --- サイドバー：LINE連携テストボタン ---
 st.sidebar.header("🛠️ 連携テスト")
 if st.sidebar.button("LINE開通テストを送信 ✉️"):
     success, info = send_test_line("✅ 【テスト通知】FXアラートのLINE連携が正常に完了しています！")
@@ -53,7 +52,6 @@ def save_alerts(alerts):
 if 'alerts_list' not in st.session_state:
     st.session_state.alerts_list = load_alerts()
 
-# 通貨ペアとデータ取得用記号（ティッカー）の辞書
 tickers_dict = {
     "USDJPY": "USDJPY=X", "EURJPY": "EURJPY=X", "GBPJPY": "GBPJPY=X",
     "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "EURGBP": "EURGBP=X",
@@ -65,20 +63,16 @@ tickers_dict = {
 timeframes = ["5分足", "15分足", "1時間足", "4時間足"]
 conditions_list = ["上回る", "下回る", "交差"]
 
-# --- 🌟 新機能：現在のレートを確認 ---
 st.write("---")
 st.subheader("💱 現在のレートを確認")
 
 check_pair = st.selectbox("確認したい通貨ペアを選択", list(tickers_dict.keys()), key="rate_check_pair")
-
 if st.button("現在のレートを確認 🔍"):
     ticker_symbol = tickers_dict[check_pair]
     st.info(f"{check_pair} の最新データを取得中...")
     try:
-        # 直近の最新データを取得
         data = yf.download(ticker_symbol, period="1d", interval="15m", progress=False)
         if not data.empty:
-            # データをきれいな数字（小数第5位）にする
             latest_close = float(data.iloc[-1]['Close'].iloc[0]) if isinstance(data.iloc[-1]['Close'], pd.Series) else float(data.iloc[-1]['Close'])
             st.success(f"**{check_pair} の現在価格:** {latest_close:.5f}")
         else:
@@ -86,7 +80,6 @@ if st.button("現在のレートを確認 🔍"):
     except Exception as e:
         st.error(f"エラーが発生しました: {e}")
 
-# --- アラート作成画面 ---
 def render_condition_ui(prefix_key):
     alert_type = st.radio("種類", ("① 価格×価格", "② 価格×SMA", "③ SMA×SMA"), key=f"{prefix_key}_type")
     col_a, col_b = st.columns(2)
@@ -118,7 +111,7 @@ if logic != "組み合わせない（条件Aのみ）":
     st.write("**【条件 B】**")
     cond_b = render_condition_ui("condB")
 
-# --- 制限と期限の設定 ---
+# --- 🌟 ここを変更：日付と時間を一緒に設定できるようにしました！ ---
 st.write("**【制限の設定】**")
 col_limit1, col_limit2 = st.columns(2)
 with col_limit1:
@@ -126,10 +119,19 @@ with col_limit1:
 with col_limit2:
     time_limit_type = st.selectbox("時間制限", ["制限なし", "指定時間まで", "指定時間以降"])
 
-limit_time_str = None
+limit_datetime_str = None
 if time_limit_type != "制限なし":
-    limit_time = st.time_input("時間を指定してください", value=datetime.strptime("15:00", "%H:%M").time())
-    limit_time_str = limit_time.strftime("%H:%M")
+    now_jst = datetime.utcnow() + timedelta(hours=9)
+    col_date, col_time = st.columns(2)
+    with col_date:
+        # カレンダーで日付を指定
+        limit_date = st.date_input("日付を指定", value=now_jst.date())
+    with col_time:
+        # 時間を指定
+        limit_time = st.time_input("時間を指定", value=datetime.strptime("15:00", "%H:%M").time())
+    
+    # 日付と時間をくっつけて「2026-03-05 15:00」という文字列にします
+    limit_datetime_str = f"{limit_date.strftime('%Y-%m-%d')} {limit_time.strftime('%H:%M')}"
 
 st.info("💡 登録後、1週間（7日間）経過すると自動的にアラートは削除されます。")
 
@@ -144,7 +146,7 @@ if st.button("このアラートを登録してロボットに伝える ➕"):
             "pair": selected_pair, "tf": selected_tf, 
             "cond_a": cond_a, "logic": logic, "cond_b": cond_b,
             "max_alerts": max_alerts, "trigger_count": 0,          
-            "time_limit_type": time_limit_type, "limit_time_str": limit_time_str,
+            "time_limit_type": time_limit_type, "limit_datetime_str": limit_datetime_str, # 変数名を変更
             "created_at": now_jst                                  
         }
         st.session_state.alerts_list.append(new_alert)
@@ -165,7 +167,12 @@ else:
     for i, alert in enumerate(st.session_state.alerts_list):
         col_list1, col_list2 = st.columns([4, 1])
         with col_list1:
-            st.write(f"**{i+1}**: {alert['pair']} ({alert['tf']}) - {alert['logic']} / 通知: {alert.get('trigger_count', 0)}/{alert.get('max_alerts', 1)}回")
+            # 登録リストに「日付＋時間」の制限情報も表示するようにしました
+            limit_disp = ""
+            if alert.get('time_limit_type') != "制限なし":
+                limit_disp = f" / {alert.get('time_limit_type')}: {alert.get('limit_datetime_str')}"
+            
+            st.write(f"**{i+1}**: {alert['pair']} ({alert['tf']}) - {alert['logic']} / 通知: {alert.get('trigger_count', 0)}/{alert.get('max_alerts', 1)}回{limit_disp}")
         with col_list2:
             if st.button("削除 🗑️", key=f"del_{i}"):
                 to_delete = i

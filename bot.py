@@ -59,8 +59,8 @@ def main():
         print("💤 登録されたアラートがないため終了します。")
         return
 
+    # 現在の日本時間を取得
     now_jst = datetime.utcnow() + timedelta(hours=9)
-    current_time_str = now_jst.strftime("%H:%M")
     
     valid_alerts = []
     needs_update = False  
@@ -68,6 +68,7 @@ def main():
     print(f"🤖 {len(alerts)}個のアラートをチェックします...")
     
     for i, alert in enumerate(alerts):
+        # 1. 1週間期限のチェック
         if 'created_at' in alert:
             created_at = datetime.fromisoformat(alert['created_at'])
             if now_jst - created_at > timedelta(days=7):
@@ -75,6 +76,7 @@ def main():
                 needs_update = True
                 continue
                 
+        # 2. 回数制限のチェック
         trigger_count = alert.get('trigger_count', 0)
         max_alerts = alert.get('max_alerts', 1)
         if trigger_count >= max_alerts:
@@ -82,16 +84,22 @@ def main():
             valid_alerts.append(alert)
             continue
 
+        # 3. 🌟 新機能：日付＋時間の制限チェック
         limit_type = alert.get('time_limit_type', '制限なし')
-        limit_time = alert.get('limit_time_str')
-        if limit_type == "指定時間まで" and current_time_str > limit_time:
-            print(f"💤 アラート {i+1} は指定時間({limit_time})を過ぎたためスキップします。")
-            valid_alerts.append(alert)
-            continue
-        elif limit_type == "指定時間以降" and current_time_str < limit_time:
-            print(f"💤 アラート {i+1} は指定時間({limit_time})前のためスキップします。")
-            valid_alerts.append(alert)
-            continue
+        limit_datetime_str = alert.get('limit_datetime_str')
+        
+        if limit_type != "制限なし" and limit_datetime_str:
+            # 「2026-03-05 15:00」という文字列を、計算できる日時のデータに変換します
+            limit_dt = datetime.strptime(limit_datetime_str, "%Y-%m-%d %H:%M")
+            
+            if limit_type == "指定時間まで" and now_jst > limit_dt:
+                print(f"💤 アラート {i+1} は指定日時({limit_datetime_str})を過ぎたためスキップします。")
+                valid_alerts.append(alert)
+                continue
+            elif limit_type == "指定時間以降" and now_jst < limit_dt:
+                print(f"💤 アラート {i+1} は指定日時({limit_datetime_str})前のためスキップします。")
+                valid_alerts.append(alert)
+                continue
 
         ticker = pairs[alert['pair']]
         try:
@@ -128,7 +136,6 @@ def main():
             if final_result:
                 alert['trigger_count'] = trigger_count + 1 
                 needs_update = True
-                # 🌟 ここを変更：LINEの通知メッセージの価格を小数第5位（.5f）まで表示するようにしました！
                 msg = f"🚨【FX自動アラート】\n通貨ペア: {alert['pair']} ({alert['tf']})\n現在価格: {cp:.5f}\n条件を満たしました！\n(通知: {alert['trigger_count']}/{max_alerts}回)"
                 send_line(msg)
                 print(f"✅ アラート発動！LINEに通知しました。")

@@ -26,4 +26,6 @@ jobs:
           # ここで先ほど作った「金庫」から鍵を取り出してロボットに渡します
           LINE_TOKEN: ${{ secrets.LINE_TOKEN }}
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+          JSONBIN_BIN_ID: ${{ secrets.JSONBIN_BIN_ID }}  # ←この行を追加 
+          JSONBIN_API_KEY: ${{secrets.JSONBIN_API_KEY }}  # ←この行を追加 
         run: python bot.py

@@ -2,8 +2,6 @@ name: FX Alert Bot
 
 # いつこのロボットを動かすか（トリガー）の設定
 on:
-  schedule:
-    - cron: '*/15 * * * *'  # 15分ごとに実行するという世界共通の書き方です
   workflow_dispatch:        # 手動で「今すぐ動かす」ボタンを付けるおまじないです
 
 jobs:

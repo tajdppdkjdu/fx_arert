@@ -23,18 +23,20 @@ def send_line(msg):
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {LINE_TOKEN}"}
     requests.post(url, headers=headers, json={"to": LINE_USER_ID, "messages": [{"type": "text", "text": msg}]})
 
-def load_alerts():
+# 🌟 ポスト全体のデータを読み込むように変更
+def load_data():
     url = f"https://api.jsonbin.io/v3/b/{JSONBIN_ID}"
     headers = {"X-Master-Key": JSONBIN_KEY}
     res = requests.get(url, headers=headers)
     if res.status_code == 200:
-        return res.json().get("record", {}).get("alerts", [])
-    return []
+        return res.json().get("record", {})
+    return {"alerts": [], "execution_logs": []}
 
-def save_alerts(alerts):
+# 🌟 ポスト全体を保存するように変更
+def save_data(data):
     url = f"https://api.jsonbin.io/v3/b/{JSONBIN_ID}"
     headers = {"X-Master-Key": JSONBIN_KEY, "Content-Type": "application/json"}
-    requests.put(url, headers=headers, json={"alerts": alerts})
+    requests.put(url, headers=headers, json=data)
 
 def check_cross(prev1, curr1, prev2, curr2, mode):
     up = (prev1 <= prev2 and curr1 > curr2)
@@ -54,29 +56,37 @@ def eval_cond(cond, cp, pp, cs, ps):
     return False
 
 def main():
-    alerts = load_alerts()
-    if not alerts:
-        print("💤 登録されたアラートがないため終了します。")
-        return
+    # データを丸ごと取得
+    data = load_data()
+    alerts = data.get("alerts", [])
+    logs = data.get("execution_logs", [])
 
     # 現在の日本時間を取得
     now_jst = datetime.utcnow() + timedelta(hours=9)
-    
-    valid_alerts = []
-    needs_update = False  
+    log_time_str = now_jst.strftime("%Y-%m-%d %H:%M:%S")
 
+    # 🌟 新機能：タイムカードを押す（直近10回分だけ残す）
+    logs.append(log_time_str)
+    logs = logs[-10:]
+    data["execution_logs"] = logs
+
+    # アラートが登録されていない場合は、タイムカードだけ保存して終了します
+    if not alerts:
+        print("💤 登録されたアラートがありません。監視履歴のみ保存します。")
+        save_data(data)
+        return
+
+    valid_alerts = []
+    
     print(f"🤖 {len(alerts)}個のアラートをチェックします...")
     
     for i, alert in enumerate(alerts):
-        # 1. 1週間期限のチェック
         if 'created_at' in alert:
             created_at = datetime.fromisoformat(alert['created_at'])
             if now_jst - created_at > timedelta(days=7):
                 print(f"🗑️ アラート {i+1} は1週間経過したため自動削除します。")
-                needs_update = True
                 continue
                 
-        # 2. 回数制限のチェック
         trigger_count = alert.get('trigger_count', 0)
         max_alerts = alert.get('max_alerts', 1)
         if trigger_count >= max_alerts:
@@ -84,14 +94,11 @@ def main():
             valid_alerts.append(alert)
             continue
 
-        # 3. 🌟 新機能：日付＋時間の制限チェック
         limit_type = alert.get('time_limit_type', '制限なし')
         limit_datetime_str = alert.get('limit_datetime_str')
         
         if limit_type != "制限なし" and limit_datetime_str:
-            # 「2026-03-05 15:00」という文字列を、計算できる日時のデータに変換します
             limit_dt = datetime.strptime(limit_datetime_str, "%Y-%m-%d %H:%M")
-            
             if limit_type == "指定時間まで" and now_jst > limit_dt:
                 print(f"💤 アラート {i+1} は指定日時({limit_datetime_str})を過ぎたためスキップします。")
                 valid_alerts.append(alert)
@@ -104,21 +111,21 @@ def main():
         ticker = pairs[alert['pair']]
         try:
             if alert['tf'] == "4時間足":
-                data = yf.download(ticker, period="60d", interval="1h", progress=False)
-                data = data.resample('4h').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last'}).dropna()
+                data_df = yf.download(ticker, period="60d", interval="1h", progress=False)
+                data_df = data_df.resample('4h').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last'}).dropna()
             else:
                 tf_map = {"5分足": "5m", "15分足": "15m", "1時間足": "1h"}
-                data = yf.download(ticker, period="60d", interval=tf_map[alert['tf']], progress=False)
+                data_df = yf.download(ticker, period="60d", interval=tf_map[alert['tf']], progress=False)
 
-            if data.empty:
+            if data_df.empty:
                 valid_alerts.append(alert)
                 continue
 
-            data['SMA6'] = data['Close'].rolling(window=6).mean()
-            data['SMA25'] = data['Close'].rolling(window=25).mean()
-            data['SMA100'] = data['Close'].rolling(window=100).mean()
+            data_df['SMA6'] = data_df['Close'].rolling(window=6).mean()
+            data_df['SMA25'] = data_df['Close'].rolling(window=25).mean()
+            data_df['SMA100'] = data_df['Close'].rolling(window=100).mean()
 
-            latest, previous = data.iloc[-1], data.iloc[-2]
+            latest, previous = data_df.iloc[-1], data_df.iloc[-2]
             def gv(r, c): return float(r[c].iloc[0]) if isinstance(r[c], pd.Series) else float(r[c])
             
             cp, pp = gv(latest, 'Close'), gv(previous, 'Close')
@@ -135,7 +142,6 @@ def main():
 
             if final_result:
                 alert['trigger_count'] = trigger_count + 1 
-                needs_update = True
                 msg = f"🚨【FX自動アラート】\n通貨ペア: {alert['pair']} ({alert['tf']})\n現在価格: {cp:.5f}\n条件を満たしました！\n(通知: {alert['trigger_count']}/{max_alerts}回)"
                 send_line(msg)
                 print(f"✅ アラート発動！LINEに通知しました。")
@@ -147,9 +153,10 @@ def main():
 
         valid_alerts.append(alert)
 
-    if needs_update:
-        save_alerts(valid_alerts)
-        print("💾 アラートの最新状態をJSONBinに保存しました。")
+    # アラートの状態とタイムカードを一緒に保存する
+    data["alerts"] = valid_alerts
+    save_data(data)
+    print("💾 アラートの最新状態と監視履歴をJSONBinに保存しました。")
 
 if __name__ == "__main__":
     main()

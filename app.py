@@ -34,6 +34,27 @@ if st.sidebar.button("LINE開通テストを送信 ✉️"):
     else:
         st.sidebar.error(f"送信失敗: {info}")
 
+# --- 🌟 新機能：ロボットの監視履歴（タイムカード）を確認 ---
+st.sidebar.write("---")
+st.sidebar.header("⏱️ ロボットの稼働状況")
+if st.sidebar.button("監視履歴を確認する 🔄"):
+    if not jsonbin_id or not jsonbin_key:
+        st.sidebar.warning("鍵が設定されていません。")
+    else:
+        url = f"https://api.jsonbin.io/v3/b/{jsonbin_id}"
+        res = requests.get(url, headers={"X-Master-Key": jsonbin_key})
+        if res.status_code == 200:
+            logs = res.json().get("record", {}).get("execution_logs", [])
+            if not logs:
+                st.sidebar.info("まだ監視の記録がありません。ロボットが次に動くのをお待ちください。")
+            else:
+                st.sidebar.success("【直近の監視日時 (最大10回)】")
+                # 新しい記録が上に来るように逆順で表示します
+                for log in reversed(logs):
+                    st.sidebar.write(f"・ {log}")
+        else:
+            st.sidebar.error("履歴の取得に失敗しました。")
+
 # --- 共有ポスト（JSONBin）との通信機能 ---
 def load_alerts():
     if not jsonbin_id or not jsonbin_key: return []
@@ -44,10 +65,18 @@ def load_alerts():
     return []
 
 def save_alerts(alerts):
+    # タイムカードの記録を消さないように、一度最新のポスト全体を取得してからアラート部分だけを上書きします
     url = f"https://api.jsonbin.io/v3/b/{jsonbin_id}"
+    get_res = requests.get(url, headers={"X-Master-Key": jsonbin_key})
+    current_data = {"alerts": []}
+    if get_res.status_code == 200:
+        current_data = get_res.json().get("record", {})
+    
+    current_data["alerts"] = alerts
+    
     headers = {"X-Master-Key": jsonbin_key, "Content-Type": "application/json"}
-    res = requests.put(url, headers=headers, json={"alerts": alerts})
-    return res.status_code == 200
+    put_res = requests.put(url, headers=headers, json=current_data)
+    return put_res.status_code == 200
 
 if 'alerts_list' not in st.session_state:
     st.session_state.alerts_list = load_alerts()
@@ -111,7 +140,6 @@ if logic != "組み合わせない（条件Aのみ）":
     st.write("**【条件 B】**")
     cond_b = render_condition_ui("condB")
 
-# --- 🌟 ここを変更：日付と時間を一緒に設定できるようにしました！ ---
 st.write("**【制限の設定】**")
 col_limit1, col_limit2 = st.columns(2)
 with col_limit1:
@@ -124,13 +152,9 @@ if time_limit_type != "制限なし":
     now_jst = datetime.utcnow() + timedelta(hours=9)
     col_date, col_time = st.columns(2)
     with col_date:
-        # カレンダーで日付を指定
         limit_date = st.date_input("日付を指定", value=now_jst.date())
     with col_time:
-        # 時間を指定
         limit_time = st.time_input("時間を指定", value=datetime.strptime("15:00", "%H:%M").time())
-    
-    # 日付と時間をくっつけて「2026-03-05 15:00」という文字列にします
     limit_datetime_str = f"{limit_date.strftime('%Y-%m-%d')} {limit_time.strftime('%H:%M')}"
 
 st.info("💡 登録後、1週間（7日間）経過すると自動的にアラートは削除されます。")
@@ -146,7 +170,7 @@ if st.button("このアラートを登録してロボットに伝える ➕"):
             "pair": selected_pair, "tf": selected_tf, 
             "cond_a": cond_a, "logic": logic, "cond_b": cond_b,
             "max_alerts": max_alerts, "trigger_count": 0,          
-            "time_limit_type": time_limit_type, "limit_datetime_str": limit_datetime_str, # 変数名を変更
+            "time_limit_type": time_limit_type, "limit_datetime_str": limit_datetime_str,
             "created_at": now_jst                                  
         }
         st.session_state.alerts_list.append(new_alert)
@@ -154,6 +178,16 @@ if st.button("このアラートを登録してロボットに伝える ➕"):
             st.success(f"{selected_pair} のアラートを登録しました！ (現在 {len(st.session_state.alerts_list)}/10個)")
         else:
             st.error("データの保存に失敗しました。")
+
+def format_condition_text(cond):
+    if not cond: return ""
+    if cond["type"] == "① 価格×価格":
+        return f"価格が {cond['target_price']:.5f} を {cond['direction']}"
+    elif cond["type"] == "② 価格×SMA":
+        return f"価格が {cond['target_sma']} を {cond['direction']}"
+    elif cond["type"] == "③ SMA×SMA":
+        return f"{cond['sma1']} が {cond['sma2']} を {cond['direction']}"
+    return ""
 
 st.write("---")
 st.subheader("📋 現在ロボットが監視中のアラート")
@@ -165,15 +199,27 @@ elif len(st.session_state.alerts_list) == 0:
 else:
     to_delete = None
     for i, alert in enumerate(st.session_state.alerts_list):
-        col_list1, col_list2 = st.columns([4, 1])
+        col_list1, col_list2 = st.columns([5, 1])
         with col_list1:
-            # 登録リストに「日付＋時間」の制限情報も表示するようにしました
             limit_disp = ""
             if alert.get('time_limit_type') != "制限なし":
                 limit_disp = f" / {alert.get('time_limit_type')}: {alert.get('limit_datetime_str')}"
             
-            st.write(f"**{i+1}**: {alert['pair']} ({alert['tf']}) - {alert['logic']} / 通知: {alert.get('trigger_count', 0)}/{alert.get('max_alerts', 1)}回{limit_disp}")
+            cond_a_text = format_condition_text(alert.get('cond_a'))
+            if alert['logic'] == "組み合わせない（条件Aのみ）":
+                logic_text = f"【 {cond_a_text} 】"
+            else:
+                cond_b_text = format_condition_text(alert.get('cond_b'))
+                join_word = "かつ" if "AND" in alert['logic'] else "または"
+                logic_text = f"【 {cond_a_text} 】 {join_word} 【 {cond_b_text} 】"
+
+            st.markdown(f"**{i+1}: {alert['pair']} ({alert['tf']})**")
+            st.write(f"↪ 条件: {logic_text}")
+            st.write(f"↪ 通知: {alert.get('trigger_count', 0)}/{alert.get('max_alerts', 1)}回{limit_disp}")
+            st.write("") 
+            
         with col_list2:
+            st.write("") 
             if st.button("削除 🗑️", key=f"del_{i}"):
                 to_delete = i
                 

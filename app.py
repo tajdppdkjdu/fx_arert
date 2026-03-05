@@ -42,7 +42,6 @@ def get_current_rate(ticker):
     if not df.empty: return float(df['Close'].iloc[-1].iloc[0] if isinstance(df['Close'].iloc[-1], pd.Series) else df['Close'].iloc[-1])
     return None
 
-# ダウ理論の解析ロジック（UI表示用）
 def analyze_dow_trend(df):
     highs, lows, closes = df['High'].squeeze(), df['Low'].squeeze(), df['Close'].squeeze()
     alt_ext = []
@@ -216,44 +215,38 @@ else:
             st.rerun()
 
 st.divider()
-st.subheader("📋 登録済みアラート")
-if not alerts: st.write("登録されていません。")
-for i, a in enumerate(alerts):
-    if a.get("type") == "trend":
-        st.markdown(f"**[{i+1}] 📈 トレンドアラート | {a['pair']} ({a['tf']})**")
-        st.write(f"状況設定: {a['situation']}")
-        if a.get('baseline_rate'): st.write(f"基準レート: {a['baseline_rate']:.3f} 割れ")
-    else:
-        st.markdown(f"**[{i+1}] 🔔 通常アラート | {a['pair']} ({a['tf']})**")
-        st.write(f"A: {a['cond_a']['type']} ({a['cond_a']['direction']})")
-        if a['logic'] != "条件Aのみ": st.write(f"{a['logic']} \nB: {a['cond_b']['type']} ({a['cond_b']['direction']})")
-    
-    if st.button("削除", key=f"del_{i}"):
-        alerts.pop(i)
-        data["alerts"] = alerts
+
+# 🚨 緊急リセット機能（どうしてもデータが消せない時用）
+with st.expander("⚠️ データが壊れて画面が動かない場合の緊急リセット"):
+    st.write("古いアラートデータが原因でエラーが出続ける場合、ここから全データを強制消去できます。")
+    if st.button("🗑️ アラートデータを全消去する"):
+        data["alerts"] = []
         save_data(data)
+        st.success("初期化完了！画面をリロードしてください。")
         st.rerun()
 
-st.divider()
 st.subheader("📋 登録済みアラート")
 if not alerts: st.write("登録されていません。")
+
 for i, a in enumerate(alerts):
-    # 🌟 エラー回避ブロック（古いデータが来てもクラッシュさせない）
+    # エラーを完全に防ぐための頑丈なブロック
     try:
         if a.get("type") == "trend":
-            st.markdown(f"**[{i+1}] 📈 トレンドアラート | {a['pair']} ({a['tf']})**")
-            st.write(f"状況設定: {a['situation']}")
+            st.markdown(f"**[{i+1}] 📈 トレンドアラート | {a.get('pair', '不明')} ({a.get('tf', '不明')})**")
+            st.write(f"状況設定: {a.get('situation', '不明')}")
             if a.get('baseline_rate'): st.write(f"基準レート: {a['baseline_rate']:.3f} 割れ")
         else:
-            st.markdown(f"**[{i+1}] 🔔 通常アラート | {a['pair']} ({a['tf']})**")
-            st.write(f"A: {a['cond_a']['type']} ({a['cond_a']['direction']})")
-            if a.get('logic', '条件Aのみ') != "条件Aのみ" and a.get('cond_b'): 
-                st.write(f"{a['logic']} \nB: {a['cond_b']['type']} ({a['cond_b']['direction']})")
+            st.markdown(f"**[{i+1}] 🔔 通常アラート | {a.get('pair', '不明')} ({a.get('tf', '不明')})**")
+            cond_a = a.get('cond_a', {})
+            st.write(f"A: {cond_a.get('type', '不明')} ({cond_a.get('direction', '不明')})")
+            
+            logic = a.get('logic', '条件Aのみ')
+            cond_b = a.get('cond_b')
+            if logic != "条件Aのみ" and cond_b is not None: 
+                st.write(f"{logic} \nB: {cond_b.get('type', '不明')} ({cond_b.get('direction', '不明')})")
     except Exception as e:
-        # エラーが起きたら赤い警告だけを出して処理を続ける
-        st.warning(f"**[{i+1}] ⚠️ 旧バージョンのデータです（下のボタンで削除してください）**")
+        st.warning(f"**[{i+1}] ⚠️ 読み込みエラー（旧形式のデータです）**")
     
-    # 削除ボタンはエラーが起きても絶対に表示させる
     if st.button("削除", key=f"del_{i}"):
         alerts.pop(i)
         data["alerts"] = alerts

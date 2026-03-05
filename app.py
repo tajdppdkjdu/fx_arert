@@ -1,87 +1,17 @@
 import streamlit as st
 import requests
+import os
 import yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="FX 自動アラート", layout="wide")
-st.title("FX レート＆シグナル アラート 🚀")
-st.write("ここで設定した条件を、ロボットが自動で監視します！（最大10個）")
+JSONBIN_ID = os.environ.get("JSONBIN_BIN_ID")
+JSONBIN_KEY = os.environ.get("JSONBIN_API_KEY")
+LINE_TOKEN = os.environ.get("LINE_TOKEN")
+LINE_USER_ID = os.environ.get("LINE_USER_ID")
+MAX_ALERTS_LIMIT = 15
 
-# --- 金庫（Secrets）から鍵を自動で取り出す ---
-line_token = st.secrets.get("LINE_TOKEN", "")
-line_user_id = st.secrets.get("LINE_USER_ID", "")
-jsonbin_id = st.secrets.get("JSONBIN_BIN_ID", "")
-jsonbin_key = st.secrets.get("JSONBIN_API_KEY", "")
-
-# --- お助け機能：LINE開通テスト用の送信 ---
-def send_test_line(msg):
-    if not line_token or not line_user_id:
-        return False, "金庫(Secrets)にLINEの鍵が設定されていません。"
-    url = "https://api.line.me/v2/bot/message/push"
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {line_token}"}
-    res = requests.post(url, headers=headers, json={"to": line_user_id, "messages": [{"type": "text", "text": msg}]})
-    if res.status_code == 200:
-        return True, "送信成功"
-    else:
-        return False, f"エラーが発生しました ({res.status_code})"
-
-st.sidebar.header("🛠️ 連携テスト")
-if st.sidebar.button("LINE開通テストを送信 ✉️"):
-    success, info = send_test_line("✅ 【テスト通知】FXアラートのLINE連携が正常に完了しています！")
-    if success:
-        st.sidebar.success("テストLINEを送信しました！スマホをご確認ください。")
-    else:
-        st.sidebar.error(f"送信失敗: {info}")
-
-# --- 🌟 新機能：ロボットの監視履歴（タイムカード）を確認 ---
-st.sidebar.write("---")
-st.sidebar.header("⏱️ ロボットの稼働状況")
-if st.sidebar.button("監視履歴を確認する 🔄"):
-    if not jsonbin_id or not jsonbin_key:
-        st.sidebar.warning("鍵が設定されていません。")
-    else:
-        url = f"https://api.jsonbin.io/v3/b/{jsonbin_id}"
-        res = requests.get(url, headers={"X-Master-Key": jsonbin_key})
-        if res.status_code == 200:
-            logs = res.json().get("record", {}).get("execution_logs", [])
-            if not logs:
-                st.sidebar.info("まだ監視の記録がありません。ロボットが次に動くのをお待ちください。")
-            else:
-                st.sidebar.success("【直近の監視日時 (最大10回)】")
-                # 新しい記録が上に来るように逆順で表示します
-                for log in reversed(logs):
-                    st.sidebar.write(f"・ {log}")
-        else:
-            st.sidebar.error("履歴の取得に失敗しました。")
-
-# --- 共有ポスト（JSONBin）との通信機能 ---
-def load_alerts():
-    if not jsonbin_id or not jsonbin_key: return []
-    url = f"https://api.jsonbin.io/v3/b/{jsonbin_id}"
-    res = requests.get(url, headers={"X-Master-Key": jsonbin_key})
-    if res.status_code == 200:
-        return res.json().get("record", {}).get("alerts", [])
-    return []
-
-def save_alerts(alerts):
-    # タイムカードの記録を消さないように、一度最新のポスト全体を取得してからアラート部分だけを上書きします
-    url = f"https://api.jsonbin.io/v3/b/{jsonbin_id}"
-    get_res = requests.get(url, headers={"X-Master-Key": jsonbin_key})
-    current_data = {"alerts": []}
-    if get_res.status_code == 200:
-        current_data = get_res.json().get("record", {})
-    
-    current_data["alerts"] = alerts
-    
-    headers = {"X-Master-Key": jsonbin_key, "Content-Type": "application/json"}
-    put_res = requests.put(url, headers=headers, json=current_data)
-    return put_res.status_code == 200
-
-if 'alerts_list' not in st.session_state:
-    st.session_state.alerts_list = load_alerts()
-
-tickers_dict = {
+pairs = {
     "USDJPY": "USDJPY=X", "EURJPY": "EURJPY=X", "GBPJPY": "GBPJPY=X",
     "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "EURGBP": "EURGBP=X",
     "AUDJPY": "AUDJPY=X", "CADJPY": "CADJPY=X", "CHFJPY": "CHFJPY=X",
@@ -89,143 +19,230 @@ tickers_dict = {
     "USDCHF": "USDCHF=X", "EUR": "EUR=X", "AUD": "AUD=X",
     "GOLD": "GC=F", "SILVER": "SI=F"
 }
-timeframes = ["5分足", "15分足", "1時間足", "4時間足"]
-conditions_list = ["上回る", "下回る", "交差"]
 
-st.write("---")
-st.subheader("💱 現在のレートを確認")
+def load_data():
+    url = f"https://api.jsonbin.io/v3/b/{JSONBIN_ID}"
+    headers = {"X-Master-Key": JSONBIN_KEY}
+    res = requests.get(url, headers=headers)
+    if res.status_code == 200: return res.json().get("record", {})
+    return {"alerts": [], "execution_logs": []}
 
-check_pair = st.selectbox("確認したい通貨ペアを選択", list(tickers_dict.keys()), key="rate_check_pair")
-if st.button("現在のレートを確認 🔍"):
-    ticker_symbol = tickers_dict[check_pair]
-    st.info(f"{check_pair} の最新データを取得中...")
-    try:
-        data = yf.download(ticker_symbol, period="1d", interval="15m", progress=False)
-        if not data.empty:
-            latest_close = float(data.iloc[-1]['Close'].iloc[0]) if isinstance(data.iloc[-1]['Close'], pd.Series) else float(data.iloc[-1]['Close'])
-            st.success(f"**{check_pair} の現在価格:** {latest_close:.5f}")
+def save_data(data):
+    url = f"https://api.jsonbin.io/v3/b/{JSONBIN_ID}"
+    headers = {"X-Master-Key": JSONBIN_KEY, "Content-Type": "application/json"}
+    requests.put(url, headers=headers, json=data)
+
+def send_line(msg):
+    url = "https://api.line.me/v2/bot/message/push"
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {LINE_TOKEN}"}
+    requests.post(url, headers=headers, json={"to": LINE_USER_ID, "messages": [{"type": "text", "text": msg}]})
+
+def get_current_rate(ticker):
+    df = yf.download(ticker, period="1d", interval="1m", progress=False)
+    if not df.empty: return float(df['Close'].iloc[-1].iloc[0] if isinstance(df['Close'].iloc[-1], pd.Series) else df['Close'].iloc[-1])
+    return None
+
+# ダウ理論の解析ロジック（UI表示用）
+def analyze_dow_trend(df):
+    highs, lows, closes = df['High'].squeeze(), df['Low'].squeeze(), df['Close'].squeeze()
+    alt_ext = []
+    
+    for i in range(6, len(df)):
+        fut = min(6, len(df) - 1 - i)
+        w_high, w_low = highs.iloc[i-6 : i+fut+1], lows.iloc[i-6 : i+fut+1]
+        
+        if highs.iloc[i] == w_high.max():
+            alt_ext.append({'idx': i, 'val': float(highs.iloc[i]), 'type': 'peak', 'conf': fut==6})
+        if lows.iloc[i] == w_low.min():
+            alt_ext.append({'idx': i, 'val': float(lows.iloc[i]), 'type': 'trough', 'conf': fut==6})
+
+    filtered = []
+    for e in alt_ext:
+        if not filtered: filtered.append(e)
         else:
-            st.error("データの取得に失敗しました。時間をおいてお試しください。")
-    except Exception as e:
-        st.error(f"エラーが発生しました: {e}")
+            last_e = filtered[-1]
+            if last_e['type'] == e['type']:
+                if (e['type'] == 'peak' and e['val'] > last_e['val']) or (e['type'] == 'trough' and e['val'] < last_e['val']):
+                    filtered[-1] = e
+            else: filtered.append(e)
 
-def render_condition_ui(prefix_key):
-    alert_type = st.radio("種類", ("① 価格×価格", "② 価格×SMA", "③ SMA×SMA"), key=f"{prefix_key}_type")
-    col_a, col_b = st.columns(2)
-    settings = {"type": alert_type}
-    if alert_type == "① 価格×価格":
-        with col_a: settings["target_price"] = st.number_input("目標レート", value=150.00000, step=0.0001, format="%.5f", key=f"{prefix_key}_p")
-        with col_b: settings["direction"] = st.selectbox("条件", conditions_list, key=f"{prefix_key}_d")
-    elif alert_type == "② 価格×SMA":
-        with col_a: settings["target_sma"] = st.selectbox("比較するSMA", ["SMA6", "SMA25", "SMA100"], key=f"{prefix_key}_s")
-        with col_b: settings["direction"] = st.selectbox("条件", conditions_list, key=f"{prefix_key}_d")
-    elif alert_type == "③ SMA×SMA":
-        with col_a: settings["sma1"] = st.selectbox("SMA (1つ目)", ["SMA6", "SMA25", "SMA100"], index=0, key=f"{prefix_key}_s1")
-        with col_b: settings["sma2"] = st.selectbox("SMA (2つ目)", ["SMA6", "SMA25", "SMA100"], index=1, key=f"{prefix_key}_s2")
-        settings["direction"] = st.selectbox("条件", conditions_list, key=f"{prefix_key}_d")
-    return settings
+    state = "レンジ"
+    last_trend = "なし"
+    baseline = None
+    h_hist, l_hist = [], []
+    r_h1 = r_h2 = r_l1 = r_l2 = 0.0
 
-st.write("---")
-st.subheader("📥 新しいアラートを作成")
-
-selected_pair = st.selectbox("通貨ペア", list(tickers_dict.keys()), key="alert_pair")
-selected_tf = st.selectbox("時間足", timeframes)
-
-st.write("**【条件 A】**")
-cond_a = render_condition_ui("condA")
-
-logic = st.radio("条件の組み合わせ", ["組み合わせない（条件Aのみ）", "AND（条件A かつ 条件B）", "OR（条件A または 条件B）"])
-cond_b = None
-if logic != "組み合わせない（条件Aのみ）":
-    st.write("**【条件 B】**")
-    cond_b = render_condition_ui("condB")
-
-st.write("**【制限の設定】**")
-col_limit1, col_limit2 = st.columns(2)
-with col_limit1:
-    max_alerts = st.number_input("アラートの最大通知回数", min_value=1, value=1)
-with col_limit2:
-    time_limit_type = st.selectbox("時間制限", ["制限なし", "指定時間まで", "指定時間以降"])
-
-limit_datetime_str = None
-if time_limit_type != "制限なし":
-    now_jst = datetime.utcnow() + timedelta(hours=9)
-    col_date, col_time = st.columns(2)
-    with col_date:
-        limit_date = st.date_input("日付を指定", value=now_jst.date())
-    with col_time:
-        limit_time = st.time_input("時間を指定", value=datetime.strptime("15:00", "%H:%M").time())
-    limit_datetime_str = f"{limit_date.strftime('%Y-%m-%d')} {limit_time.strftime('%H:%M')}"
-
-st.info("💡 登録後、1週間（7日間）経過すると自動的にアラートは削除されます。")
-
-if st.button("このアラートを登録してロボットに伝える ➕"):
-    if not jsonbin_id or not jsonbin_key:
-        st.error("⚠️ StreamlitのSettingsからSecrets（鍵）を設定してください！")
-    elif len(st.session_state.alerts_list) >= 10:  
-        st.error("登録できるアラートは最大10個までです！")
-    else:
-        now_jst = (datetime.utcnow() + timedelta(hours=9)).isoformat()
-        new_alert = {
-            "pair": selected_pair, "tf": selected_tf, 
-            "cond_a": cond_a, "logic": logic, "cond_b": cond_b,
-            "max_alerts": max_alerts, "trigger_count": 0,          
-            "time_limit_type": time_limit_type, "limit_datetime_str": limit_datetime_str,
-            "created_at": now_jst                                  
-        }
-        st.session_state.alerts_list.append(new_alert)
-        if save_alerts(st.session_state.alerts_list):
-            st.success(f"{selected_pair} のアラートを登録しました！ (現在 {len(st.session_state.alerts_list)}/10個)")
-        else:
-            st.error("データの保存に失敗しました。")
-
-def format_condition_text(cond):
-    if not cond: return ""
-    if cond["type"] == "① 価格×価格":
-        return f"価格が {cond['target_price']:.5f} を {cond['direction']}"
-    elif cond["type"] == "② 価格×SMA":
-        return f"価格が {cond['target_sma']} を {cond['direction']}"
-    elif cond["type"] == "③ SMA×SMA":
-        return f"{cond['sma1']} が {cond['sma2']} を {cond['direction']}"
-    return ""
-
-st.write("---")
-st.subheader("📋 現在ロボットが監視中のアラート")
-
-if not jsonbin_id:
-    st.warning("⚠️ StreamlitのSettingsからSecretsに鍵を設定すると、ここに監視中のアラートが表示されます。")
-elif len(st.session_state.alerts_list) == 0:
-    st.info("現在登録されているアラートはありません。")
-else:
-    to_delete = None
-    for i, alert in enumerate(st.session_state.alerts_list):
-        col_list1, col_list2 = st.columns([5, 1])
-        with col_list1:
-            limit_disp = ""
-            if alert.get('time_limit_type') != "制限なし":
-                limit_disp = f" / {alert.get('time_limit_type')}: {alert.get('limit_datetime_str')}"
-            
-            cond_a_text = format_condition_text(alert.get('cond_a'))
-            if alert['logic'] == "組み合わせない（条件Aのみ）":
-                logic_text = f"【 {cond_a_text} 】"
+    for i in range(len(df)):
+        e = next((x for x in filtered if x['idx'] == i), None)
+        if e:
+            if e['type'] == 'peak':
+                h_hist.append(e)
+                if state in ["下降トレンド", "仮下降トレンド"]: baseline = e['val']
             else:
-                cond_b_text = format_condition_text(alert.get('cond_b'))
-                join_word = "かつ" if "AND" in alert['logic'] else "または"
-                logic_text = f"【 {cond_a_text} 】 {join_word} 【 {cond_b_text} 】"
-
-            st.markdown(f"**{i+1}: {alert['pair']} ({alert['tf']})**")
-            st.write(f"↪ 条件: {logic_text}")
-            st.write(f"↪ 通知: {alert.get('trigger_count', 0)}/{alert.get('max_alerts', 1)}回{limit_disp}")
-            st.write("") 
-            
-        with col_list2:
-            st.write("") 
-            if st.button("削除 🗑️", key=f"del_{i}"):
-                to_delete = i
+                l_hist.append(e)
+                if state in ["上昇トレンド", "仮上昇トレンド"]: baseline = e['val']
                 
-    if to_delete is not None:
-        deleted_pair = st.session_state.alerts_list[to_delete]['pair']
-        st.session_state.alerts_list.pop(to_delete)
-        save_alerts(st.session_state.alerts_list)
-        st.success(f"アラート {deleted_pair} を削除しました！")
+            if len(h_hist) >= 2 and len(l_hist) >= 2:
+                H1, H2, L1, L2 = h_hist[-2], h_hist[-1], l_hist[-2], l_hist[-1]
+                if L1['idx'] < H1['idx'] < L2['idx'] < H2['idx'] and e['idx'] == H2['idx']:
+                    if L1['val'] < L2['val'] and H1['val'] < H2['val']:
+                        state = "上昇トレンド" if H2['conf'] else "仮上昇トレンド"
+                        baseline, last_trend = L2['val'], state
+                        r_h1, r_h2, r_l1, r_l2 = H1['val'], H2['val'], L1['val'], L2['val']
+                elif H1['idx'] < L1['idx'] < H2['idx'] < L2['idx'] and e['idx'] == L2['idx']:
+                    if H1['val'] > H2['val'] and L1['val'] > L2['val']:
+                        state = "下降トレンド" if L2['conf'] else "仮下降トレンド"
+                        baseline, last_trend = H2['val'], state
+                        r_h1, r_h2, r_l1, r_l2 = H1['val'], H2['val'], L1['val'], L2['val']
+
+        cp = float(closes.iloc[i])
+        if state in ["上昇トレンド", "仮上昇トレンド"] and baseline and cp < baseline:
+            state, baseline = "レンジ", None
+        elif state in ["下降トレンド", "仮下降トレンド"] and baseline and cp > baseline:
+            state, baseline = "レンジ", None
+
+    state_map = {"上昇トレンド": 1, "仮上昇トレンド": 2, "下降トレンド": 3, "仮下降トレンド": 4, "レンジ": 5}
+    return {"code": state_map[state], "name": state, "last": last_trend, "h1": r_h1, "h2": r_h2, "l1": r_l1, "l2": r_l2}
+
+st.title("FX 自動アラートシステム")
+data = load_data()
+alerts = data.get("alerts", [])
+logs = data.get("execution_logs", [])
+
+st.subheader("🔍 現在のレート確認")
+c1, c2 = st.columns([3, 1])
+with c1: check_pair = st.selectbox("通貨ペア", list(pairs.keys()), key="check")
+with c2: 
+    st.write("")
+    if st.button("取得"):
+        rate = get_current_rate(pairs[check_pair])
+        if rate: st.success(f"{check_pair} : {rate:.5f}")
+        else: st.error("取得失敗")
+
+st.subheader("📊 現在のトレンドを取得 (ダウ理論)")
+tc1, tc2, tc3 = st.columns([2, 2, 1])
+with tc1: t_pair = st.selectbox("通貨ペア", list(pairs.keys()), key="t_pair_check")
+with tc2: t_tf = st.selectbox("時間足", ["5分足", "15分足", "1時間足", "4時間足"], key="t_tf_check")
+with tc3:
+    st.write("")
+    if st.button("判定"):
+        ticker = pairs[t_pair]
+        tf_map = {"5分足": "5m", "15分足": "15m", "1時間足": "1h"}
+        with st.spinner("解析中..."):
+            if t_tf == "4時間足":
+                df = yf.download(ticker, period="60d", interval="1h", progress=False)
+                if not df.empty: df = df.resample('4h').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last'}).dropna()
+            else:
+                df = yf.download(ticker, period="60d", interval=tf_map[t_tf], progress=False)
+            
+            if df.empty: st.error("データ取得失敗")
+            else:
+                res = analyze_dow_trend(df)
+                st.info(f"**現在の状態：{res['code']}. {res['name']}**")
+                if res['code'] in [1, 2]:
+                    st.write(f"安値：{res['l1']:.5f} → {res['l2']:.5f} \n高値：{res['h1']:.5f} → {res['h2']:.5f}")
+                elif res['code'] in [3, 4]:
+                    st.write(f"高値：{res['h1']:.5f} → {res['h2']:.5f} \n安値：{res['l1']:.5f} → {res['l2']:.5f}")
+                else:
+                    st.write(f"直前に起きていたトレンド：{res['last']}")
+
+st.divider()
+
+if len(alerts) >= MAX_ALERTS_LIMIT:
+    st.warning(f"登録上限（{MAX_ALERTS_LIMIT}個）です。")
+else:
+    with st.expander("🔔 通常アラート（価格・SMA）を設定する"):
+        pair = st.selectbox("通貨ペア", list(pairs.keys()))
+        tf = st.selectbox("時間足", ["5分足", "15分足", "1時間足", "4時間足"])
+        
+        def cond_ui(label):
+            st.write(f"**{label}**")
+            ctype = st.selectbox("種類", ["① 価格×価格", "② 価格×SMA", "③ SMA×SMA"], key=f"ctype_{label}")
+            if ctype == "① 価格×価格":
+                price = st.number_input("目標価格", value=150.0, format="%.3f", key=f"price_{label}")
+                dir_ = st.selectbox("条件", ["上回る", "下回る", "交差"], key=f"dir_{label}")
+                return {"type": ctype, "target_price": price, "direction": dir_}
+            elif ctype == "② 価格×SMA":
+                sma = st.selectbox("SMA", ["SMA6", "SMA25", "SMA100"], key=f"sma_{label}")
+                dir_ = st.selectbox("条件", ["上回る", "下回る", "交差"], key=f"dir2_{label}")
+                return {"type": ctype, "target_sma": sma, "direction": dir_}
+            else:
+                s1 = st.selectbox("SMA(主)", ["SMA6", "SMA25", "SMA100"], key=f"s1_{label}")
+                s2 = st.selectbox("SMA(副)", ["SMA6", "SMA25", "SMA100"], index=1, key=f"s2_{label}")
+                dir_ = st.selectbox("条件", ["上回る", "下回る", "交差"], key=f"dir3_{label}")
+                return {"type": ctype, "sma1": s1, "sma2": s2, "direction": dir_}
+
+        cond_a = cond_ui("条件A")
+        logic = st.selectbox("条件Bの追加", ["条件Aのみ", "AND（条件A かつ 条件B）", "OR（条件A または 条件B）"])
+        cond_b = cond_ui("条件B") if logic != "条件Aのみ" else None
+        
+        if st.button("通常アラートを登録"):
+            new_alert = {"type": "normal", "pair": pair, "tf": tf, "logic": logic, "cond_a": cond_a, "cond_b": cond_b, "created_at": datetime.now().isoformat()}
+            alerts.append(new_alert)
+            data["alerts"] = alerts
+            save_data(data)
+            st.success("登録しました！")
+            st.rerun()
+
+    st.write("---")
+    
+    st.write("📈 **トレンドアラートを設定する**")
+    t_toggle = st.radio("", ["× (設定しない)", "〇 (設定する)"], horizontal=True, label_visibility="collapsed")
+    if t_toggle == "〇 (設定する)":
+        alert_t_pair = st.selectbox("通貨ペア (トレンド監視用)", list(pairs.keys()), key="at_pair")
+        alert_t_tf = st.selectbox("時間足 (トレンド監視用)", ["5分足", "15分足", "1時間足", "4時間足"], key="at_tf")
+        alert_t_curr = st.selectbox("現在のトレンド（手動選択）", ["1. 上昇トレンド", "2. 仮上昇トレンド", "3. 下降トレンド", "4. 仮下降トレンド", "5. レンジ"])
+        
+        if alert_t_curr.startswith("1") or alert_t_curr.startswith("2"):
+            sit_opts = ["上昇トレンドが終了したら", "下降トレンドが始まったら"]
+        elif alert_t_curr.startswith("3") or alert_t_curr.startswith("4"):
+            sit_opts = ["下降トレンドが終了したら", "上昇トレンドが始まったら"]
+        else:
+            sit_opts = ["上昇トレンドが始まったら", "下降トレンドが始まったら", "トレンドが始まったら"]
+            
+        alert_sit = st.selectbox("シチュエーション選択", sit_opts)
+        
+        base_rate = None
+        if "終了したら" in alert_sit:
+            st.info("💡 終了判定の基準となるレート（直近安値/高値）を入力してください。")
+            base_rate = st.number_input("基準レート", value=150.000, format="%.3f", key="base_rate")
+            
+        if st.button("トレンドアラートを登録"):
+            new_alert = {"type": "trend", "pair": alert_t_pair, "tf": alert_t_tf, "current_trend": alert_t_curr, "situation": alert_sit, "baseline_rate": base_rate, "created_at": datetime.now().isoformat()}
+            alerts.append(new_alert)
+            data["alerts"] = alerts
+            save_data(data)
+            st.success("登録しました！")
+            st.rerun()
+
+st.divider()
+st.subheader("📋 登録済みアラート")
+if not alerts: st.write("登録されていません。")
+for i, a in enumerate(alerts):
+    if a.get("type") == "trend":
+        st.markdown(f"**[{i+1}] 📈 トレンドアラート | {a['pair']} ({a['tf']})**")
+        st.write(f"状況設定: {a['situation']}")
+        if a.get('baseline_rate'): st.write(f"基準レート: {a['baseline_rate']:.3f} 割れ")
+    else:
+        st.markdown(f"**[{i+1}] 🔔 通常アラート | {a['pair']} ({a['tf']})**")
+        st.write(f"A: {a['cond_a']['type']} ({a['cond_a']['direction']})")
+        if a['logic'] != "条件Aのみ": st.write(f"{a['logic']} \nB: {a['cond_b']['type']} ({a['cond_b']['direction']})")
+    
+    if st.button("削除", key=f"del_{i}"):
+        alerts.pop(i)
+        data["alerts"] = alerts
+        save_data(data)
         st.rerun()
+
+st.divider()
+st.subheader("⚙️ 連携テスト")
+if st.button("LINE開通テストを送信 ✉️"):
+    send_line("FXアラート: 開通テスト成功！")
+    st.success("送信しました")
+
+st.subheader("⏱️ ロボットの稼働状況")
+if st.button("監視履歴を確認する 🔄"): st.rerun()
+if logs:
+    for log in reversed(logs): st.info(f"✅ {log} (JST) 監視完了")
+else:
+    st.info("まだ記録がありません。")

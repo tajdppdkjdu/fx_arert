@@ -142,10 +142,13 @@ with tc3:
             if t_tf == "4時間足":
                 df = yf.download(ticker, period="60d", interval="1h", progress=False)
                 if not df.empty:
+                    # 🌟 Yahooの箱の名前の仕様変更に対応（過去のMultiIndexエラー回避）
                     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+                    # 🌟 1時間足を4本くっつけて4時間足を生成する処理（負荷対策）
                     df = df.resample('4h').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last'}).dropna()
             else:
                 df = yf.download(ticker, period="60d", interval=tf_map[t_tf], progress=False)
+                # 🌟 Yahooの箱の名前の仕様変更に対応（通常足のエラー回避）
                 if not df.empty and isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
             
             if df.empty: st.error("データ取得失敗")
@@ -153,7 +156,8 @@ with tc3:
                 res = analyze_dow_trend(df)
                 st.info(f"**現在の状態：{res['code']}. {res['name']}**")
                 
-                # 🌟追加：時間をキレイなフォーマット（MM/DD HH:MM~HH:MM）に変換する関数
+                # 🌟時間をキレイなフォーマット（MM/DD HH:MM~HH:MM）に変換する関数
+                # ユーザーが修正しやすいよう、tc3ブロック内に配置します。
                 def fmt_time(t, tf):
                     if pd.isnull(t) or t is None: return ""
                     try:
@@ -169,15 +173,38 @@ with tc3:
                     elif tf == "4時間足": end_t = t + timedelta(hours=4)
                     else: end_t = t
                     end_str = end_t.strftime("%H:%M")
-                    return f"({start_str}~{end_str})"
+                    # 🌟修正ポイント3：間に「~」を確実に入れる！
+                    return f"({start_str}~{end_str})" 
                 
-                # 🌟表示部分の変更：時間（fmt_time）を組み込んで表示
+                # 🌟表示部分の変更：値と時間を分け、視認性を劇的に向上させる
+                # 上昇トレンドの場合（1.2）
                 if res['code'] in [1, 2]:
-                    st.write(f"安値：{res['l1']:.5f} {fmt_time(res['t_l1'], t_tf)} → {res['l2']:.5f} {fmt_time(res['t_l2'], t_tf)}")
-                    st.write(f"高値：{res['h1']:.5f} {fmt_time(res['t_h1'], t_tf)} → {res['h2']:.5f} {fmt_time(res['t_h2'], t_tf)}")
+                    # 安値のペアを表示
+                    # 🌟修正ポイント1：st.writeを分割することで、Markdownレンダリングエラー（文字の線）も消える可能性が高いです。
+                    st.write(f"安値：{res['l1']:.5f} → {res['l2']:.5f}")
+                    # 🌟修正ポイント2：時間の行を分けて表示。st.captionを使うと薄く表示されてメリハリが出ます。
+                    st.caption(f"時間：{fmt_time(res['t_l1'], t_tf)} → {fmt_time(res['t_l2'], t_tf)}")
+                    
+                    # 間に区切り線を入れて視認性を上げる
+                    st.write("---")
+                    
+                    # 高値のペアを表示
+                    st.write(f"高値：{res['h1']:.5f} → {res['h2']:.5f}")
+                    st.caption(f"時間：{fmt_time(res['t_h1'], t_tf)} → {fmt_time(res['t_h2'], t_tf)}")
+                    
+                # 下降トレンドの場合（3.4）※画像2のエラー画面に対応
                 elif res['code'] in [3, 4]:
-                    st.write(f"高値：{res['h1']:.5f} {fmt_time(res['t_h1'], t_tf)} → {res['h2']:.5f} {fmt_time(res['t_h2'], t_tf)}")
-                    st.write(f"安値：{res['l1']:.5f} {fmt_time(res['t_l1'], t_tf)} → {res['l2']:.5f} {fmt_time(res['t_l2'], t_tf)}")
+                    # 🌟修正ポイント2：下降トレンドなら高値更新の順にする
+                    # 高値のペアを表示
+                    st.write(f"高値：{res['h1']:.5f} → {res['h2']:.5f}")
+                    st.caption(f"時間：{fmt_time(res['t_h1'], t_tf)} → {fmt_time(res['t_h2'], t_tf)}")
+                    
+                    # 間に区切り線を入れて視認性を上げる
+                    st.write("---")
+                    
+                    # 安値のペアを表示
+                    st.write(f"安値：{res['l1']:.5f} → {res['l2']:.5f}")
+                    st.caption(f"時間：{fmt_time(res['t_l1'], t_tf)} → {fmt_time(res['t_l2'], t_tf)}")
                 else:
                     st.write(f"直前に起きていたトレンド：{res['last']}")
 

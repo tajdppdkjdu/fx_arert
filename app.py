@@ -235,6 +235,32 @@ for i, a in enumerate(alerts):
         st.rerun()
 
 st.divider()
+st.subheader("📋 登録済みアラート")
+if not alerts: st.write("登録されていません。")
+for i, a in enumerate(alerts):
+    # 🌟 エラー回避ブロック（古いデータが来てもクラッシュさせない）
+    try:
+        if a.get("type") == "trend":
+            st.markdown(f"**[{i+1}] 📈 トレンドアラート | {a['pair']} ({a['tf']})**")
+            st.write(f"状況設定: {a['situation']}")
+            if a.get('baseline_rate'): st.write(f"基準レート: {a['baseline_rate']:.3f} 割れ")
+        else:
+            st.markdown(f"**[{i+1}] 🔔 通常アラート | {a['pair']} ({a['tf']})**")
+            st.write(f"A: {a['cond_a']['type']} ({a['cond_a']['direction']})")
+            if a.get('logic', '条件Aのみ') != "条件Aのみ" and a.get('cond_b'): 
+                st.write(f"{a['logic']} \nB: {a['cond_b']['type']} ({a['cond_b']['direction']})")
+    except Exception as e:
+        # エラーが起きたら赤い警告だけを出して処理を続ける
+        st.warning(f"**[{i+1}] ⚠️ 旧バージョンのデータです（下のボタンで削除してください）**")
+    
+    # 削除ボタンはエラーが起きても絶対に表示させる
+    if st.button("削除", key=f"del_{i}"):
+        alerts.pop(i)
+        data["alerts"] = alerts
+        save_data(data)
+        st.rerun()
+
+st.divider()
 st.subheader("⚙️ 連携テスト")
 if st.button("LINE開通テストを送信 ✉️"):
     send_line("FXアラート: 開通テスト成功！")

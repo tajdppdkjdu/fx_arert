@@ -35,7 +35,6 @@ def save_data(data):
     headers = {"X-Master-Key": JSONBIN_KEY, "Content-Type": "application/json"}
     requests.put(url, headers=headers, json=data)
 
-# 🌟 負荷対策：同じ通貨・時間足のデータは1回だけDLして使い回す！
 cache_data = {}
 def get_cached_df(ticker, tf):
     key = f"{ticker}_{tf}"
@@ -44,14 +43,18 @@ def get_cached_df(ticker, tf):
     tf_map = {"5分足": "5m", "15分足": "15m", "1時間足": "1h"}
     if tf == "4時間足":
         df = yf.download(ticker, period="60d", interval="1h", progress=False)
-        if not df.empty: df = df.resample('4h').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last'}).dropna()
+        if not df.empty:
+            # 🌟 追加：Yahooの箱の名前の仕様変更に対応
+            if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+            df = df.resample('4h').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last'}).dropna()
     else:
         df = yf.download(ticker, period="60d", interval=tf_map[tf], progress=False)
-        
+        # 🌟 追加：Yahooの箱の名前の仕様変更に対応
+        if not df.empty and isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+            
     cache_data[key] = df
     return df
 
-# ダウ理論ロジック（app.pyと同一）
 def analyze_dow_trend(df):
     highs, lows, closes = df['High'].squeeze(), df['Low'].squeeze(), df['Close'].squeeze()
     alt_ext = []
@@ -134,7 +137,6 @@ def main():
     valid_alerts = []
     
     for alert in alerts:
-        # 古いアラート（7日経過）のスキップ処理
         if 'created_at' in alert:
             created_at = datetime.fromisoformat(alert['created_at'])
             if now_jst - created_at > timedelta(days=7): continue
@@ -146,9 +148,9 @@ def main():
             continue
 
         trigger = False
-        cp = float(df['Close'].iloc[-1].iloc[0] if isinstance(df['Close'].iloc[-1], pd.Series) else df['Close'].iloc[-1])
+        val = df['Close'].iloc[-1]
+        cp = float(val.iloc[0] if isinstance(val, pd.Series) else val)
 
-        # 📈 トレンドアラートの処理
         if alert.get('type') == 'trend':
             curr_code = analyze_dow_trend(df)
             sit = alert['situation']
@@ -164,9 +166,8 @@ def main():
                 msg = f"📈【トレンドアラート】\n{alert['pair']} ({alert['tf']})\n設定: {sit}\n現在値: {cp:.5f}\n条件を満たしました！"
                 send_line(msg)
                 print(f"✅ トレンドアラート発動 ({alert['pair']})")
-                continue # 通知したらリストから削除（validに加えない）
+                continue 
 
-        # 🔔 通常アラートの処理
         else:
             df['SMA6'] = df['Close'].rolling(window=6).mean()
             df['SMA25'] = df['Close'].rolling(window=25).mean()
@@ -183,14 +184,14 @@ def main():
             result_a = eval_cond(alert['cond_a'], pp, ch, cl, ps, cs)
             final_result = result_a
             
-            if alert['logic'] == "AND（条件A かつ 条件B）": final_result = result_a and eval_cond(alert['cond_b'], pp, ch, cl, ps, cs)
-            elif alert['logic'] == "OR（条件A または 条件B）": final_result = result_a or eval_cond(alert['cond_b'], pp, ch, cl, ps, cs)
+            if alert.get('logic') == "AND（条件A かつ 条件B）": final_result = result_a and eval_cond(alert['cond_b'], pp, ch, cl, ps, cs)
+            elif alert.get('logic') == "OR（条件A または 条件B）": final_result = result_a or eval_cond(alert['cond_b'], pp, ch, cl, ps, cs)
 
             if final_result:
                 msg = f"🚨【FX通常アラート】\n通貨ペア: {alert['pair']} ({alert['tf']})\n現在値: {cp:.5f}\n(高値: {ch:.5f} / 安値: {cl:.5f})\n条件を満たしました！"
                 send_line(msg)
                 print(f"✅ 通常アラート発動 ({alert['pair']})")
-                continue # 通知したらリストから削除
+                continue 
 
         valid_alerts.append(alert)
 

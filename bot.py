@@ -120,11 +120,25 @@ def eval_cond(cond, pp, ch, cl, ps, cs):
     return False
 
 def main():
+    now_jst = datetime.utcnow() + timedelta(hours=9)
+    
+    # 🌟 追加：週末休場（土曜朝8:00 〜 月曜朝6:00）は処理をスキップ
+    is_weekend = False
+    if now_jst.weekday() == 5 and now_jst.hour >= 8:  # 土曜日の8時以降
+        is_weekend = True
+    elif now_jst.weekday() == 6:                      # 日曜日まるごと
+        is_weekend = True
+    elif now_jst.weekday() == 0 and now_jst.hour < 6: # 月曜日の朝6時未満
+        is_weekend = True
+
+    if is_weekend:
+        print(f"💤 週末休場のため監視をスキップします ({now_jst.strftime('%Y-%m-%d %H:%M:%S')} JST)")
+        return  # ここで処理を終了し、API通信やデータ保存を一切行わない
+
     data = load_data()
     alerts = data.get("alerts", [])
     logs = data.get("execution_logs", [])
 
-    now_jst = datetime.utcnow() + timedelta(hours=9)
     logs.append(now_jst.strftime("%Y-%m-%d %H:%M:%S"))
     data["execution_logs"] = logs[-10:]
 
@@ -154,18 +168,14 @@ def main():
             sit = alert['situation']
             base = alert.get('baseline_rate')
             
-            # 🌟 新機能：ロボットが寝ていた間に確定したローソク足（直近4本分）の終値をすべて取得
-            # これにより、5分足設定時でも15分間の間の「終値でのブレイク」を絶対に見逃しません。
             recent_closes = [float(v.iloc[0] if isinstance(v, pd.Series) else v) for v in df['Close'].tail(4)]
 
             if sit == "上昇トレンドが始まったら" and curr_code in [1, 2]: trigger = True
             elif sit == "下降トレンドが始まったら" and curr_code in [3, 4]: trigger = True
             elif sit == "トレンドが始まったら" and curr_code in [1, 2, 3, 4]: trigger = True
             elif sit == "上昇トレンドが終了したら" and base:
-                # 過去4本の終値のうち、1つでも基準レートを下回っていれば通知！
                 if any(c < base for c in recent_closes): trigger = True
             elif sit == "下降トレンドが終了したら" and base:
-                # 過去4本の終値のうち、1つでも基準レートを上回っていれば通知！
                 if any(c > base for c in recent_closes): trigger = True
 
             if trigger:

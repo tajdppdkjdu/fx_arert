@@ -44,12 +44,10 @@ def get_cached_df(ticker, tf):
     if tf == "4時間足":
         df = yf.download(ticker, period="60d", interval="1h", progress=False)
         if not df.empty:
-            # 🌟 追加：Yahooの箱の名前の仕様変更に対応
             if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
             df = df.resample('4h').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last'}).dropna()
     else:
         df = yf.download(ticker, period="60d", interval=tf_map[tf], progress=False)
-        # 🌟 追加：Yahooの箱の名前の仕様変更に対応
         if not df.empty and isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
             
     cache_data[key] = df
@@ -155,12 +153,20 @@ def main():
             curr_code = analyze_dow_trend(df)
             sit = alert['situation']
             base = alert.get('baseline_rate')
+            
+            # 🌟 新機能：ロボットが寝ていた間に確定したローソク足（直近4本分）の終値をすべて取得
+            # これにより、5分足設定時でも15分間の間の「終値でのブレイク」を絶対に見逃しません。
+            recent_closes = [float(v.iloc[0] if isinstance(v, pd.Series) else v) for v in df['Close'].tail(4)]
 
             if sit == "上昇トレンドが始まったら" and curr_code in [1, 2]: trigger = True
             elif sit == "下降トレンドが始まったら" and curr_code in [3, 4]: trigger = True
             elif sit == "トレンドが始まったら" and curr_code in [1, 2, 3, 4]: trigger = True
-            elif sit == "上昇トレンドが終了したら" and base and cp < base: trigger = True
-            elif sit == "下降トレンドが終了したら" and base and cp > base: trigger = True
+            elif sit == "上昇トレンドが終了したら" and base:
+                # 過去4本の終値のうち、1つでも基準レートを下回っていれば通知！
+                if any(c < base for c in recent_closes): trigger = True
+            elif sit == "下降トレンドが終了したら" and base:
+                # 過去4本の終値のうち、1つでも基準レートを上回っていれば通知！
+                if any(c > base for c in recent_closes): trigger = True
 
             if trigger:
                 msg = f"📈【トレンドアラート】\n{alert['pair']} ({alert['tf']})\n設定: {sit}\n現在値: {cp:.5f}\n条件を満たしました！"

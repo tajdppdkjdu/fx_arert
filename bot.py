@@ -23,140 +23,179 @@ def send_line(msg):
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {LINE_TOKEN}"}
     requests.post(url, headers=headers, json={"to": LINE_USER_ID, "messages": [{"type": "text", "text": msg}]})
 
-# 🌟 ポスト全体のデータを読み込むように変更
 def load_data():
     url = f"https://api.jsonbin.io/v3/b/{JSONBIN_ID}"
     headers = {"X-Master-Key": JSONBIN_KEY}
     res = requests.get(url, headers=headers)
-    if res.status_code == 200:
-        return res.json().get("record", {})
+    if res.status_code == 200: return res.json().get("record", {})
     return {"alerts": [], "execution_logs": []}
 
-# 🌟 ポスト全体を保存するように変更
 def save_data(data):
     url = f"https://api.jsonbin.io/v3/b/{JSONBIN_ID}"
     headers = {"X-Master-Key": JSONBIN_KEY, "Content-Type": "application/json"}
     requests.put(url, headers=headers, json=data)
 
-def check_cross(prev1, curr1, prev2, curr2, mode):
-    up = (prev1 <= prev2 and curr1 > curr2)
-    down = (prev1 >= prev2 and curr1 < curr2)
+# 🌟 負荷対策：同じ通貨・時間足のデータは1回だけDLして使い回す！
+cache_data = {}
+def get_cached_df(ticker, tf):
+    key = f"{ticker}_{tf}"
+    if key in cache_data: return cache_data[key]
+    
+    tf_map = {"5分足": "5m", "15分足": "15m", "1時間足": "1h"}
+    if tf == "4時間足":
+        df = yf.download(ticker, period="60d", interval="1h", progress=False)
+        if not df.empty: df = df.resample('4h').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last'}).dropna()
+    else:
+        df = yf.download(ticker, period="60d", interval=tf_map[tf], progress=False)
+        
+    cache_data[key] = df
+    return df
+
+# ダウ理論ロジック（app.pyと同一）
+def analyze_dow_trend(df):
+    highs, lows, closes = df['High'].squeeze(), df['Low'].squeeze(), df['Close'].squeeze()
+    alt_ext = []
+    for i in range(6, len(df)):
+        fut = min(6, len(df) - 1 - i)
+        w_high, w_low = highs.iloc[i-6 : i+fut+1], lows.iloc[i-6 : i+fut+1]
+        if highs.iloc[i] == w_high.max(): alt_ext.append({'idx': i, 'val': float(highs.iloc[i]), 'type': 'peak', 'conf': fut==6})
+        if lows.iloc[i] == w_low.min(): alt_ext.append({'idx': i, 'val': float(lows.iloc[i]), 'type': 'trough', 'conf': fut==6})
+
+    filtered = []
+    for e in alt_ext:
+        if not filtered: filtered.append(e)
+        else:
+            last_e = filtered[-1]
+            if last_e['type'] == e['type']:
+                if (e['type'] == 'peak' and e['val'] > last_e['val']) or (e['type'] == 'trough' and e['val'] < last_e['val']):
+                    filtered[-1] = e
+            else: filtered.append(e)
+
+    state, baseline = "レンジ", None
+    h_hist, l_hist = [], []
+
+    for i in range(len(df)):
+        e = next((x for x in filtered if x['idx'] == i), None)
+        if e:
+            if e['type'] == 'peak':
+                h_hist.append(e)
+                if state in ["下降トレンド", "仮下降トレンド"]: baseline = e['val']
+            else:
+                l_hist.append(e)
+                if state in ["上昇トレンド", "仮上昇トレンド"]: baseline = e['val']
+                
+            if len(h_hist) >= 2 and len(l_hist) >= 2:
+                H1, H2, L1, L2 = h_hist[-2], h_hist[-1], l_hist[-2], l_hist[-1]
+                if L1['idx'] < H1['idx'] < L2['idx'] < H2['idx'] and e['idx'] == H2['idx']:
+                    if L1['val'] < L2['val'] and H1['val'] < H2['val']:
+                        state = "上昇トレンド" if H2['conf'] else "仮上昇トレンド"
+                        baseline = L2['val']
+                elif H1['idx'] < L1['idx'] < H2['idx'] < L2['idx'] and e['idx'] == L2['idx']:
+                    if H1['val'] > H2['val'] and L1['val'] > L2['val']:
+                        state = "下降トレンド" if L2['conf'] else "仮下降トレンド"
+                        baseline = H2['val']
+
+        cp = float(closes.iloc[i])
+        if state in ["上昇トレンド", "仮上昇トレンド"] and baseline and cp < baseline:
+            state, baseline = "レンジ", None
+        elif state in ["下降トレンド", "仮下降トレンド"] and baseline and cp > baseline:
+            state, baseline = "レンジ", None
+
+    state_map = {"上昇トレンド": 1, "仮上昇トレンド": 2, "下降トレンド": 3, "仮下降トレンド": 4, "レンジ": 5}
+    return state_map[state]
+
+def check_cross(prev_price, curr_high, curr_low, prev_target, curr_target, mode):
+    up = (prev_price <= prev_target and curr_high > curr_target)
+    down = (prev_price >= prev_target and curr_low < curr_target)
     if mode == "上回る": return up
     if mode == "下回る": return down
     if mode == "交差": return up or down
     return False
 
-def eval_cond(cond, cp, pp, cs, ps):
-    if cond["type"] == "① 価格×価格":
-        return check_cross(pp, cp, cond["target_price"], cond["target_price"], cond["direction"])
-    elif cond["type"] == "② 価格×SMA":
-        return check_cross(pp, cp, ps[cond["target_sma"]], cs[cond["target_sma"]], cond["direction"])
-    elif cond["type"] == "③ SMA×SMA":
-        return check_cross(ps[cond["sma1"]], cs[cond["sma1"]], ps[cond["sma2"]], cs[cond["sma2"]], cond["direction"])
+def eval_cond(cond, pp, ch, cl, ps, cs):
+    if cond["type"] == "① 価格×価格": return check_cross(pp, ch, cl, cond["target_price"], cond["target_price"], cond["direction"])
+    elif cond["type"] == "② 価格×SMA": return check_cross(pp, ch, cl, ps[cond["target_sma"]], cs[cond["target_sma"]], cond["direction"])
+    elif cond["type"] == "③ SMA×SMA": return check_cross(ps[cond["sma1"]], cs[cond["sma1"]], cs[cond["sma1"]], ps[cond["sma2"]], cs[cond["sma2"]], cond["direction"])
     return False
 
 def main():
-    # データを丸ごと取得
     data = load_data()
     alerts = data.get("alerts", [])
     logs = data.get("execution_logs", [])
 
-    # 現在の日本時間を取得
     now_jst = datetime.utcnow() + timedelta(hours=9)
-    log_time_str = now_jst.strftime("%Y-%m-%d %H:%M:%S")
+    logs.append(now_jst.strftime("%Y-%m-%d %H:%M:%S"))
+    data["execution_logs"] = logs[-10:]
 
-    # 🌟 新機能：タイムカードを押す（直近10回分だけ残す）
-    logs.append(log_time_str)
-    logs = logs[-10:]
-    data["execution_logs"] = logs
-
-    # アラートが登録されていない場合は、タイムカードだけ保存して終了します
     if not alerts:
-        print("💤 登録されたアラートがありません。監視履歴のみ保存します。")
         save_data(data)
         return
 
     valid_alerts = []
     
-    print(f"🤖 {len(alerts)}個のアラートをチェックします...")
-    
-    for i, alert in enumerate(alerts):
+    for alert in alerts:
+        # 古いアラート（7日経過）のスキップ処理
         if 'created_at' in alert:
             created_at = datetime.fromisoformat(alert['created_at'])
-            if now_jst - created_at > timedelta(days=7):
-                print(f"🗑️ アラート {i+1} は1週間経過したため自動削除します。")
-                continue
-                
-        trigger_count = alert.get('trigger_count', 0)
-        max_alerts = alert.get('max_alerts', 1)
-        if trigger_count >= max_alerts:
-            print(f"💤 アラート {i+1} は上限({max_alerts}回)に達しているためスキップします。")
+            if now_jst - created_at > timedelta(days=7): continue
+
+        ticker = pairs[alert['pair']]
+        df = get_cached_df(ticker, alert['tf'])
+        if df.empty:
             valid_alerts.append(alert)
             continue
 
-        limit_type = alert.get('time_limit_type', '制限なし')
-        limit_datetime_str = alert.get('limit_datetime_str')
-        
-        if limit_type != "制限なし" and limit_datetime_str:
-            limit_dt = datetime.strptime(limit_datetime_str, "%Y-%m-%d %H:%M")
-            if limit_type == "指定時間まで" and now_jst > limit_dt:
-                print(f"💤 アラート {i+1} は指定日時({limit_datetime_str})を過ぎたためスキップします。")
-                valid_alerts.append(alert)
-                continue
-            elif limit_type == "指定時間以降" and now_jst < limit_dt:
-                print(f"💤 アラート {i+1} は指定日時({limit_datetime_str})前のためスキップします。")
-                valid_alerts.append(alert)
-                continue
+        trigger = False
+        cp = float(df['Close'].iloc[-1].iloc[0] if isinstance(df['Close'].iloc[-1], pd.Series) else df['Close'].iloc[-1])
 
-        ticker = pairs[alert['pair']]
-        try:
-            if alert['tf'] == "4時間足":
-                data_df = yf.download(ticker, period="60d", interval="1h", progress=False)
-                data_df = data_df.resample('4h').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last'}).dropna()
-            else:
-                tf_map = {"5分足": "5m", "15分足": "15m", "1時間足": "1h"}
-                data_df = yf.download(ticker, period="60d", interval=tf_map[alert['tf']], progress=False)
+        # 📈 トレンドアラートの処理
+        if alert.get('type') == 'trend':
+            curr_code = analyze_dow_trend(df)
+            sit = alert['situation']
+            base = alert.get('baseline_rate')
 
-            if data_df.empty:
-                valid_alerts.append(alert)
-                continue
+            if sit == "上昇トレンドが始まったら" and curr_code in [1, 2]: trigger = True
+            elif sit == "下降トレンドが始まったら" and curr_code in [3, 4]: trigger = True
+            elif sit == "トレンドが始まったら" and curr_code in [1, 2, 3, 4]: trigger = True
+            elif sit == "上昇トレンドが終了したら" and base and cp < base: trigger = True
+            elif sit == "下降トレンドが終了したら" and base and cp > base: trigger = True
 
-            data_df['SMA6'] = data_df['Close'].rolling(window=6).mean()
-            data_df['SMA25'] = data_df['Close'].rolling(window=25).mean()
-            data_df['SMA100'] = data_df['Close'].rolling(window=100).mean()
+            if trigger:
+                msg = f"📈【トレンドアラート】\n{alert['pair']} ({alert['tf']})\n設定: {sit}\n現在値: {cp:.5f}\n条件を満たしました！"
+                send_line(msg)
+                print(f"✅ トレンドアラート発動 ({alert['pair']})")
+                continue # 通知したらリストから削除（validに加えない）
 
-            latest, previous = data_df.iloc[-1], data_df.iloc[-2]
+        # 🔔 通常アラートの処理
+        else:
+            df['SMA6'] = df['Close'].rolling(window=6).mean()
+            df['SMA25'] = df['Close'].rolling(window=25).mean()
+            df['SMA100'] = df['Close'].rolling(window=100).mean()
+
+            latest, previous = df.iloc[-1], df.iloc[-2]
             def gv(r, c): return float(r[c].iloc[0]) if isinstance(r[c], pd.Series) else float(r[c])
             
-            cp, pp = gv(latest, 'Close'), gv(previous, 'Close')
+            pp = gv(previous, 'Close')
+            ch, cl = gv(latest, 'High'), gv(latest, 'Low')
             cs = {"SMA6": gv(latest, 'SMA6'), "SMA25": gv(latest, 'SMA25'), "SMA100": gv(latest, 'SMA100')}
             ps = {"SMA6": gv(previous, 'SMA6'), "SMA25": gv(previous, 'SMA25'), "SMA100": gv(previous, 'SMA100')}
 
-            result_a = eval_cond(alert['cond_a'], cp, pp, cs, ps)
+            result_a = eval_cond(alert['cond_a'], pp, ch, cl, ps, cs)
             final_result = result_a
             
-            if alert['logic'] == "AND（条件A かつ 条件B）":
-                final_result = result_a and eval_cond(alert['cond_b'], cp, pp, cs, ps)
-            elif alert['logic'] == "OR（条件A または 条件B）":
-                final_result = result_a or eval_cond(alert['cond_b'], cp, pp, cs, ps)
+            if alert['logic'] == "AND（条件A かつ 条件B）": final_result = result_a and eval_cond(alert['cond_b'], pp, ch, cl, ps, cs)
+            elif alert['logic'] == "OR（条件A または 条件B）": final_result = result_a or eval_cond(alert['cond_b'], pp, ch, cl, ps, cs)
 
             if final_result:
-                alert['trigger_count'] = trigger_count + 1 
-                msg = f"🚨【FX自動アラート】\n通貨ペア: {alert['pair']} ({alert['tf']})\n現在価格: {cp:.5f}\n条件を満たしました！\n(通知: {alert['trigger_count']}/{max_alerts}回)"
+                msg = f"🚨【FX通常アラート】\n通貨ペア: {alert['pair']} ({alert['tf']})\n現在値: {cp:.5f}\n(高値: {ch:.5f} / 安値: {cl:.5f})\n条件を満たしました！"
                 send_line(msg)
-                print(f"✅ アラート発動！LINEに通知しました。")
-            else:
-                print(f"💤 アラート条件未達です。")
-                
-        except Exception as e:
-            print(f"エラー: {e}")
+                print(f"✅ 通常アラート発動 ({alert['pair']})")
+                continue # 通知したらリストから削除
 
         valid_alerts.append(alert)
 
-    # アラートの状態とタイムカードを一緒に保存する
     data["alerts"] = valid_alerts
     save_data(data)
-    print("💾 アラートの最新状態と監視履歴をJSONBinに保存しました。")
 
 if __name__ == "__main__":
     main()

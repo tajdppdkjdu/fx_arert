@@ -173,8 +173,7 @@ with tc3:
                     elif tf == "4時間足": end_t = t + timedelta(hours=4)
                     else: end_t = t
                     end_str = end_t.strftime("%H:%M")
-                    # 🌟修正ポイント3：間に「~」を確実に入れる！
-                    return f"({start_str}~{end_str})" 
+                    return f"({start_str}→{end_str})" 
                 
                 # 🌟表示部分の変更：値と時間を分け、視認性を劇的に向上させる
                 # 上昇トレンドの場合（1.2）

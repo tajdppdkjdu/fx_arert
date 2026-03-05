@@ -48,6 +48,7 @@ def get_current_rate(ticker):
 
 def analyze_dow_trend(df):
     highs, lows, closes = df['High'].squeeze(), df['Low'].squeeze(), df['Close'].squeeze()
+    times = df.index # 🌟追加：日時データを取得
     alt_ext = []
     
     for i in range(6, len(df)):
@@ -55,9 +56,9 @@ def analyze_dow_trend(df):
         w_high, w_low = highs.iloc[i-6 : i+fut+1], lows.iloc[i-6 : i+fut+1]
         
         if highs.iloc[i] == w_high.max():
-            alt_ext.append({'idx': i, 'val': float(highs.iloc[i]), 'type': 'peak', 'conf': fut==6})
+            alt_ext.append({'idx': i, 'val': float(highs.iloc[i]), 'type': 'peak', 'conf': fut==6, 'time': times[i]})
         if lows.iloc[i] == w_low.min():
-            alt_ext.append({'idx': i, 'val': float(lows.iloc[i]), 'type': 'trough', 'conf': fut==6})
+            alt_ext.append({'idx': i, 'val': float(lows.iloc[i]), 'type': 'trough', 'conf': fut==6, 'time': times[i]})
 
     filtered = []
     for e in alt_ext:
@@ -74,6 +75,7 @@ def analyze_dow_trend(df):
     baseline = None
     h_hist, l_hist = [], []
     r_h1 = r_h2 = r_l1 = r_l2 = 0.0
+    t_h1 = t_h2 = t_l1 = t_l2 = None # 🌟追加：時間の変数を準備
 
     for i in range(len(df)):
         e = next((x for x in filtered if x['idx'] == i), None)
@@ -92,11 +94,13 @@ def analyze_dow_trend(df):
                         state = "上昇トレンド" if H2['conf'] else "仮上昇トレンド"
                         baseline, last_trend = L2['val'], state
                         r_h1, r_h2, r_l1, r_l2 = H1['val'], H2['val'], L1['val'], L2['val']
+                        t_h1, t_h2, t_l1, t_l2 = H1['time'], H2['time'], L1['time'], L2['time'] # 🌟追加
                 elif H1['idx'] < L1['idx'] < H2['idx'] < L2['idx'] and e['idx'] == L2['idx']:
                     if H1['val'] > H2['val'] and L1['val'] > L2['val']:
                         state = "下降トレンド" if L2['conf'] else "仮下降トレンド"
                         baseline, last_trend = H2['val'], state
                         r_h1, r_h2, r_l1, r_l2 = H1['val'], H2['val'], L1['val'], L2['val']
+                        t_h1, t_h2, t_l1, t_l2 = H1['time'], H2['time'], L1['time'], L2['time'] # 🌟追加
 
         cp = float(closes.iloc[i])
         if state in ["上昇トレンド", "仮上昇トレンド"] and baseline and cp < baseline:
@@ -105,7 +109,10 @@ def analyze_dow_trend(df):
             state, baseline = "レンジ", None
 
     state_map = {"上昇トレンド": 1, "仮上昇トレンド": 2, "下降トレンド": 3, "仮下降トレンド": 4, "レンジ": 5}
-    return {"code": state_map[state], "name": state, "last": last_trend, "h1": r_h1, "h2": r_h2, "l1": r_l1, "l2": r_l2}
+    return {"code": state_map[state], "name": state, "last": last_trend, 
+            "h1": r_h1, "h2": r_h2, "l1": r_l1, "l2": r_l2,
+            "t_h1": t_h1, "t_h2": t_h2, "t_l1": t_l1, "t_l2": t_l2} # 🌟追加
+
 
 st.title("FX 自動アラートシステム")
 data = load_data()

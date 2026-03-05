@@ -142,24 +142,45 @@ with tc3:
             if t_tf == "4時間足":
                 df = yf.download(ticker, period="60d", interval="1h", progress=False)
                 if not df.empty:
-                    # 🌟 追加：Yahooの箱の名前の仕様変更に対応
                     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
                     df = df.resample('4h').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last'}).dropna()
             else:
                 df = yf.download(ticker, period="60d", interval=tf_map[t_tf], progress=False)
-                # 🌟 追加：Yahooの箱の名前の仕様変更に対応
                 if not df.empty and isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
             
             if df.empty: st.error("データ取得失敗")
             else:
                 res = analyze_dow_trend(df)
                 st.info(f"**現在の状態：{res['code']}. {res['name']}**")
+                
+                # 🌟追加：時間をキレイなフォーマット（MM/DD HH:MM~HH:MM）に変換する関数
+                def fmt_time(t, tf):
+                    if pd.isnull(t) or t is None: return ""
+                    try:
+                        # 日本時間（JST）に合わせる処理
+                        if t.tzinfo is not None: t = t.tz_convert('Asia/Tokyo')
+                        else: t = t.tz_localize('UTC').tz_convert('Asia/Tokyo')
+                    except: pass
+                    
+                    start_str = t.strftime("%m/%d %H:%M")
+                    if tf == "5分足": end_t = t + timedelta(minutes=5)
+                    elif tf == "15分足": end_t = t + timedelta(minutes=15)
+                    elif tf == "1時間足": end_t = t + timedelta(hours=1)
+                    elif tf == "4時間足": end_t = t + timedelta(hours=4)
+                    else: end_t = t
+                    end_str = end_t.strftime("%H:%M")
+                    return f"({start_str}~{end_str})"
+                
+                # 🌟表示部分の変更：時間（fmt_time）を組み込んで表示
                 if res['code'] in [1, 2]:
-                    st.write(f"安値：{res['l1']:.5f} → {res['l2']:.5f} \n高値：{res['h1']:.5f} → {res['h2']:.5f}")
+                    st.write(f"安値：{res['l1']:.5f} {fmt_time(res['t_l1'], t_tf)} → {res['l2']:.5f} {fmt_time(res['t_l2'], t_tf)}")
+                    st.write(f"高値：{res['h1']:.5f} {fmt_time(res['t_h1'], t_tf)} → {res['h2']:.5f} {fmt_time(res['t_h2'], t_tf)}")
                 elif res['code'] in [3, 4]:
-                    st.write(f"高値：{res['h1']:.5f} → {res['h2']:.5f} \n安値：{res['l1']:.5f} → {res['l2']:.5f}")
+                    st.write(f"高値：{res['h1']:.5f} {fmt_time(res['t_h1'], t_tf)} → {res['h2']:.5f} {fmt_time(res['t_h2'], t_tf)}")
+                    st.write(f"安値：{res['l1']:.5f} {fmt_time(res['t_l1'], t_tf)} → {res['l2']:.5f} {fmt_time(res['t_l2'], t_tf)}")
                 else:
                     st.write(f"直前に起きていたトレンド：{res['last']}")
+
 
 st.divider()
 

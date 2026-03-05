@@ -212,7 +212,7 @@ else:
         
         base_rate = None
         if "終了したら" in alert_sit:
-            st.info("💡 終了判定の基準となるレート（直近安値/高値）を入力してください。")
+            st.info("💡 終了判定の基準となるレート（高値更新の起点となった押し安値/戻り高値）を入力してください。")
             base_rate = st.number_input("基準レート", value=150.000, format="%.3f", key="base_rate")
             
         if st.button("トレンドアラートを登録"):

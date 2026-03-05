@@ -39,7 +39,11 @@ def send_line(msg):
 
 def get_current_rate(ticker):
     df = yf.download(ticker, period="1d", interval="1m", progress=False)
-    if not df.empty: return float(df['Close'].iloc[-1].iloc[0] if isinstance(df['Close'].iloc[-1], pd.Series) else df['Close'].iloc[-1])
+    if not df.empty:
+        # 🌟 追加：Yahooの箱の名前の仕様変更に対応
+        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+        val = df['Close'].iloc[-1]
+        return float(val.iloc[0] if isinstance(val, pd.Series) else val)
     return None
 
 def analyze_dow_trend(df):
@@ -130,9 +134,14 @@ with tc3:
         with st.spinner("解析中..."):
             if t_tf == "4時間足":
                 df = yf.download(ticker, period="60d", interval="1h", progress=False)
-                if not df.empty: df = df.resample('4h').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last'}).dropna()
+                if not df.empty:
+                    # 🌟 追加：Yahooの箱の名前の仕様変更に対応
+                    if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+                    df = df.resample('4h').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last'}).dropna()
             else:
                 df = yf.download(ticker, period="60d", interval=tf_map[t_tf], progress=False)
+                # 🌟 追加：Yahooの箱の名前の仕様変更に対応
+                if not df.empty and isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
             
             if df.empty: st.error("データ取得失敗")
             else:
@@ -216,7 +225,7 @@ else:
 
 st.divider()
 
-# 🚨 緊急リセット機能（どうしてもデータが消せない時用）
+# 🚨 緊急リセット機能
 with st.expander("⚠️ データが壊れて画面が動かない場合の緊急リセット"):
     st.write("古いアラートデータが原因でエラーが出続ける場合、ここから全データを強制消去できます。")
     if st.button("🗑️ アラートデータを全消去する"):
@@ -229,7 +238,6 @@ st.subheader("📋 登録済みアラート")
 if not alerts: st.write("登録されていません。")
 
 for i, a in enumerate(alerts):
-    # エラーを完全に防ぐための頑丈なブロック
     try:
         if a.get("type") == "trend":
             st.markdown(f"**[{i+1}] 📈 トレンドアラート | {a.get('pair', '不明')} ({a.get('tf', '不明')})**")

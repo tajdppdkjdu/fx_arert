@@ -20,6 +20,8 @@ pairs = {
     "GOLD": "GC=F", "SILVER": "SI=F"
 }
 
+# 🌟 追加：5分間（300秒）は無駄なGET通信を行わず、手元のデータを使い回す！
+@st.cache_data(ttl=300)
 def load_data():
     url = f"https://api.jsonbin.io/v3/b/{JSONBIN_ID}"
     headers = {"X-Master-Key": JSONBIN_KEY}
@@ -31,6 +33,8 @@ def save_data(data):
     url = f"https://api.jsonbin.io/v3/b/{JSONBIN_ID}"
     headers = {"X-Master-Key": JSONBIN_KEY, "Content-Type": "application/json"}
     requests.put(url, headers=headers, json=data)
+    # 🌟 データを新しく保存・削除した時は、キャッシュを消して最新状態を読み込み直す
+    st.cache_data.clear()
 
 def send_line(msg):
     url = "https://api.line.me/v2/bot/message/push"
@@ -115,7 +119,6 @@ def analyze_dow_trend(df):
 st.title("FX 自動アラートシステム")
 data = load_data()
 alerts = data.get("alerts", [])
-logs = data.get("execution_logs", [])
 
 st.subheader("🔍 現在のレート確認")
 c1, c2 = st.columns([3, 1])
@@ -349,9 +352,5 @@ if st.button("LINE開通テストを送信 ✉️"):
     send_line("FXアラート: 開通テスト成功！")
     st.success("送信しました")
 
-st.subheader("⏱️ ロボットの稼働状況")
-if st.button("監視履歴を確認する 🔄"): st.rerun()
-if logs:
-    for log in reversed(logs): st.info(f"✅ {log} (JST) 監視完了")
-else:
-    st.info("まだ記録がありません。")
+# 🌟 ロボットの稼働ログ機能は「書き込み停止」に伴い一旦オフにして隠します。
+# st.subheader("⏱️ ロボットの稼働状況")

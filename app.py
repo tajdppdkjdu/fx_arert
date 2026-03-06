@@ -299,13 +299,22 @@ for i, a in enumerate(alerts):
             if a.get('baseline_rate'): st.write(f"基準レート: {a['baseline_rate']:.3f} 割れ")
         else:
             st.markdown(f"**[{i+1}] 🔔 通常アラート | {a.get('pair', '不明')} ({a.get('tf', '不明')})**")
-            cond_a = a.get('cond_a', {})
-            st.write(f"A: {cond_a.get('type', '不明')} ({cond_a.get('direction', '不明')})")
+            
+            # 条件を分かりやすく文章にする機能を追加
+            def fmt_cond(c):
+                if not c: return "不明"
+                t, d = c.get('type', '不明'), c.get('direction', '不明')
+                if t == "① 価格×価格": return f"{t} : {c.get('target_price')} を {d}"
+                if t == "② 価格×SMA": return f"{t} : {c.get('target_sma')} を {d}"
+                if t == "③ SMA×SMA": return f"{t} : {c.get('sma1')} が {c.get('sma2')} を {d}"
+                return f"{t} ({d})"
+
+            st.write(f"A: {fmt_cond(a.get('cond_a'))}")
             
             logic = a.get('logic', '条件Aのみ')
             cond_b = a.get('cond_b')
             if logic != "条件Aのみ" and cond_b is not None: 
-                st.write(f"{logic} \nB: {cond_b.get('type', '不明')} ({cond_b.get('direction', '不明')})")
+                st.write(f"{logic} \nB: {fmt_cond(cond_b)}")
     except Exception as e:
         st.warning(f"**[{i+1}] ⚠️ 読み込みエラー（旧形式のデータです）**")
     

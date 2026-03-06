@@ -122,18 +122,17 @@ def eval_cond(cond, pp, ch, cl, ps, cs):
 def main():
     now_jst = datetime.utcnow() + timedelta(hours=9)
     
-    # 🌟 追加：週末休場（土曜朝8:00 〜 月曜朝6:00）は処理をスキップ
     is_weekend = False
-    if now_jst.weekday() == 5 and now_jst.hour >= 8:  # 土曜日の8時以降
+    if now_jst.weekday() == 5 and now_jst.hour >= 8:
         is_weekend = True
-    elif now_jst.weekday() == 6:                      # 日曜日まるごと
+    elif now_jst.weekday() == 6:
         is_weekend = True
-    elif now_jst.weekday() == 0 and now_jst.hour < 6: # 月曜日の朝6時未満
+    elif now_jst.weekday() == 0 and now_jst.hour < 6:
         is_weekend = True
 
     if is_weekend:
         print(f"💤 週末休場のため監視をスキップします ({now_jst.strftime('%Y-%m-%d %H:%M:%S')} JST)")
-        return  # ここで処理を終了し、API通信やデータ保存を一切行わない
+        return
 
     data = load_data()
     alerts = data.get("alerts", [])
@@ -149,9 +148,24 @@ def main():
     valid_alerts = []
     
     for alert in alerts:
+        # 🌟 ① 1週間での自動無効化チェック
         if 'created_at' in alert:
             created_at = datetime.fromisoformat(alert['created_at'])
-            if now_jst - created_at > timedelta(days=7): continue
+            if now_jst - created_at > timedelta(days=7): 
+                print(f"🗑️ 1週間経過したため自動削除: {alert['pair']}")
+                continue 
+
+        # 🌟 ② 時間制限（〜まで / 〜以降）のチェック
+        limit_mode = alert.get('time_mode', 'なし（1週間で自動無効）')
+        if limit_mode != 'なし（1週間で自動無効）' and alert.get('limit_dt'):
+            limit_dt = datetime.fromisoformat(alert['limit_dt']).replace(tzinfo=None)
+            if limit_mode == "指定日時まで有効" and now_jst > limit_dt:
+                print(f"🗑️ 期限切れのため自動削除: {alert['pair']}")
+                continue
+            if limit_mode == "指定日時以降に有効" and now_jst < limit_dt:
+                # まだ有効になっていないので今回は判定をスキップ（削除せず保持）
+                valid_alerts.append(alert)
+                continue
 
         ticker = pairs[alert['pair']]
         df = get_cached_df(ticker, alert['tf'])
@@ -163,6 +177,7 @@ def main():
         val = df['Close'].iloc[-1]
         cp = float(val.iloc[0] if isinstance(val, pd.Series) else val)
 
+        # ====== トレンドアラート（ワンショット） ======
         if alert.get('type') == 'trend':
             curr_code = analyze_dow_trend(df)
             sit = alert['situation']
@@ -182,8 +197,9 @@ def main():
                 msg = f"📈【トレンドアラート】\n{alert['pair']} ({alert['tf']})\n設定: {sit}\n現在値: {cp:.5f}\n条件を満たしました！"
                 send_line(msg)
                 print(f"✅ トレンドアラート発動 ({alert['pair']})")
-                continue 
+                continue # ワンショットなので削除される
 
+        # ====== 通常アラート（回数制限あり） ======
         else:
             df['SMA6'] = df['Close'].rolling(window=6).mean()
             df['SMA25'] = df['Close'].rolling(window=25).mean()
@@ -204,10 +220,19 @@ def main():
             elif alert.get('logic') == "OR（条件A または 条件B）": final_result = result_a or eval_cond(alert['cond_b'], pp, ch, cl, ps, cs)
 
             if final_result:
-                msg = f"🚨【FX通常アラート】\n通貨ペア: {alert['pair']} ({alert['tf']})\n現在値: {cp:.5f}\n(高値: {ch:.5f} / 安値: {cl:.5f})\n条件を満たしました！"
+                # 🌟 ③ 回数のカウント処理
+                alert['current_count'] = alert.get('current_count', 0) + 1
+                max_c = alert.get('max_count', 1)
+                
+                msg = f"🚨【FX通常アラート】 ({alert['current_count']}/{max_c}回目)\n通貨ペア: {alert['pair']} ({alert['tf']})\n現在値: {cp:.5f}\n(高値: {ch:.5f} / 安値: {cl:.5f})\n条件を満たしました！"
                 send_line(msg)
-                print(f"✅ 通常アラート発動 ({alert['pair']})")
-                continue 
+                print(f"✅ 通常アラート発動 ({alert['pair']}) {alert['current_count']}/{max_c}回目")
+                
+                if alert['current_count'] >= max_c:
+                    continue # 上限回数に達したので削除する
+                else:
+                    valid_alerts.append(alert) # まだ回数が残っているので保持して次へ
+                    continue 
 
         valid_alerts.append(alert)
 

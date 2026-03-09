@@ -16,7 +16,7 @@ pairs = {
     "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "EURGBP": "EURGBP=X",
     "AUDJPY": "AUDJPY=X", "CADJPY": "CADJPY=X", "CHFJPY": "CHFJPY=X",
     "GBPAUD": "GBPAUD=X", "AUDUSD": "AUDUSD=X", "USDCAD": "USDCAD=X",
-    "USDCHF": "USDCHF=X", "EUR": "EUR=X", "AUD": "AUD=X",
+    "USDCHF": "USDCHF=X", "EURAUD": "EURAUD=X",
     "GOLD": "GC=F", "SILVER": "SI=F"
 }
 

@@ -16,7 +16,8 @@ pairs = {
     "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "EURGBP": "EURGBP=X",
     "AUDJPY": "AUDJPY=X", "CADJPY": "CADJPY=X", "CHFJPY": "CHFJPY=X",
     "GBPAUD": "GBPAUD=X", "AUDUSD": "AUDUSD=X", "USDCAD": "USDCAD=X",
-    "USDCHF": "USDCHF=X", "EURAUD": "EURAUD=X",
+    "USDCHF": "USDCHF=X", 
+    "EURAUD": "EURAUD=X",  # ← GOLDの前に配置しました！
     "GOLD": "GC=F", "SILVER": "SI=F"
 }
 

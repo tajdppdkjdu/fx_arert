@@ -127,23 +127,32 @@ def calc_radar_indicators(df):
 def get_env_status(ticker):
     status = {"match": False, "dir": "エラー", "1h_k": 0, "1h_c": 0, "1h_sma": 0}
     try:
+        # 1. まず普通に3つのデータを取得
         df_1h = yf.download(ticker, period="10d", interval="1h", progress=False)
-        df_4h = yf.download(ticker, period="30d", interval="1h", progress=False).resample('4h').agg({'High':'max', 'Low':'min', 'Close':'last'}).dropna()
+        df_4h_raw = yf.download(ticker, period="30d", interval="1h", progress=False)
         df_d = yf.download(ticker, period="60d", interval="1d", progress=False)
         
-        if df_1h.empty or df_4h.empty or df_d.empty: return status
+        if df_1h.empty or df_4h_raw.empty or df_d.empty: return status
 
-        for df in [df_1h, df_4h, df_d]:
-            if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+        # 2. 【超重要】ここで先にデータの形（MultiIndex）を綺麗にする！
+        for df in [df_1h, df_4h_raw, df_d]:
+            if isinstance(df.columns, pd.MultiIndex): 
+                df.columns = df.columns.get_level_values(0)
 
+        # 3. 綺麗になったデータを使って4時間足を作る（※ここがエラーの原因でした！）
+        df_4h = df_4h_raw.resample('4h').agg({'High':'max', 'Low':'min', 'Close':'last'}).dropna()
+
+        # 4. 基準線とMA100の計算
         df_1h = calc_radar_indicators(df_1h)
         df_4h = calc_radar_indicators(df_4h)
         df_d = calc_radar_indicators(df_d)
 
+        # 5. 最新の価格と基準線の取得
         c1, k1 = df_1h['Close'].iloc[-1], df_1h['Kijun'].iloc[-1]
         c4, k4 = df_4h['Close'].iloc[-1], df_4h['Kijun'].iloc[-1]
         cd, kd = df_d['Close'].iloc[-1], df_d['Kijun'].iloc[-1]
         
+        # 6. 目線の判定
         dir1 = "買" if c1 > k1 else "売"
         dir4 = "買" if c4 > k4 else "売"
         dird = "買" if cd > kd else "売"
@@ -153,7 +162,8 @@ def get_env_status(ticker):
         status["1h_sma"] = float(df_1h['SMA100'].iloc[-1])
         status["dir"] = dir1
         status["match"] = (dir1 == dir4 == dird)
-    except:
+    except Exception as e:
+        # エラー時は「エラー」のまま返す
         pass
     return status
 # ===============================================

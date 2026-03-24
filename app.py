@@ -484,7 +484,7 @@ with st.expander("レーダーを展開する", expanded=False):
             else:
                 st.write("⚪️ 未取得")
                 
-        with col4:
+      with col4:
             if r_state["active"]:
                 p = r_state.get('phase', 0)
                 phase_map = {0: "待機中", 1: "①開始待ち", 2: "②準備待ち", 3: "③ｴﾝﾄﾘｰ待ち"}
@@ -494,12 +494,13 @@ with st.expander("レーダーを展開する", expanded=False):
                 p100 = r_state.get('100_pct', 0)
                 tgt = r_state.get('target_15m', 0)
                 
+                # 🌟 すべて .5f（小数点第5位）に統一！
                 if p == 1 and p100 != 0:
-                    st.code(f"100%: {p100:.3f}")
+                    st.code(f"100%: {p100:.5f}")
                 elif p == 2:
-                    st.code(f"0%: {p0:.3f}\n100%: {p100:.3f}")
+                    st.code(f"0%: {p0:.5f}\n100%: {p100:.5f}")
                 elif p == 3 and tgt != 0:
-                    st.code(f"ﾌﾞﾚｲｸ基準: {tgt:.3f}")
+                    st.code(f"ﾌﾞﾚｲｸ基準: {tgt:.5f}")
             else:
                 if env_data and env_data['dir'] != "エラー":
                     sim_p = env_data.get('sim_phase', 1)
@@ -510,10 +511,11 @@ with st.expander("レーダーを展開する", expanded=False):
                     p_str = "①開始待ち" if sim_p == 1 else "②準備/ｴﾝﾄﾘｰ"
                     st.write(f"_{p_str}_ (第{sim_c}ｻｲｸﾙ)")
                     
+                    # 🌟 ここも .5f に統一！
                     if sim_p == 1 and sim_100 != 0:
-                        st.code(f"100%: {sim_100:.3f}")
+                        st.code(f"100%: {sim_100:.5f}")
                     elif sim_p == 2 and sim_0 != 0:
-                        st.code(f"0%: {sim_0:.3f}\n100%: {sim_100:.3f}")
+                        st.code(f"0%: {sim_0:.5f}\n100%: {sim_100:.5f}")
                 else:
                     st.write("待機(停止中)")
                 

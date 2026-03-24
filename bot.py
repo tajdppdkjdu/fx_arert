@@ -62,7 +62,6 @@ def calc_radar_indicators(df):
     df['Kijun'] = (high26 + low26) / 2
     return df
 
-@st.cache_data(ttl=300, show_spinner=False)
 def get_env_status(ticker):
     status = {"match": False, "dir": "エラー", "1h_k": 0, "1h_c": 0, "1h_sma": 0}
     try:

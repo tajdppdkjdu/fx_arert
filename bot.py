@@ -19,48 +19,6 @@ pairs = {
     "GOLD": "GC=F", "SILVER": "SI=F"
 }
 
-# === 【追加部品①】レーダー用インジケーター計算 ===
-def calc_radar_indicators(df):
-    df['SMA100'] = df['Close'].rolling(window=100).mean()
-    high26 = df['High'].rolling(window=26).max()
-    low26 = df['Low'].rolling(window=26).min()
-    df['Kijun'] = (high26 + low26) / 2
-    return df
-
-def get_env_status(ticker):
-    status = {"match": False, "dir": "待機", "1h_k": 0, "1h_c": 0, "1h_sma": 0}
-    try:
-        df_1h = yf.download(ticker, period="10d", interval="1h", progress=False)
-        df_4h = yf.download(ticker, period="30d", interval="1h", progress=False).resample('4h').agg({'High':'max', 'Low':'min', 'Close':'last'}).dropna()
-        df_d = yf.download(ticker, period="60d", interval="1d", progress=False)
-        
-        if df_1h.empty or df_4h.empty or df_d.empty: return status
-
-        for df in [df_1h, df_4h, df_d]:
-            if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-
-        df_1h = calc_radar_indicators(df_1h)
-        df_4h = calc_radar_indicators(df_4h)
-        df_d = calc_radar_indicators(df_d)
-
-        c1, k1 = df_1h['Close'].iloc[-1], df_1h['Kijun'].iloc[-1]
-        c4, k4 = df_4h['Close'].iloc[-1], df_4h['Kijun'].iloc[-1]
-        cd, kd = df_d['Close'].iloc[-1], df_d['Kijun'].iloc[-1]
-        
-        dir1 = "買" if c1 > k1 else "売"
-        dir4 = "買" if c4 > k4 else "売"
-        dird = "買" if cd > kd else "売"
-
-        status["1h_c"] = float(c1)
-        status["1h_k"] = float(k1)
-        status["1h_sma"] = float(df_1h['SMA100'].iloc[-1])
-        status["dir"] = dir1
-        status["match"] = (dir1 == dir4 == dird)
-    except:
-        pass
-    return status
-# ===============================================
-
 def send_line(msg):
     url = "https://api.line.me/v2/bot/message/push"
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {LINE_TOKEN}"}
@@ -95,6 +53,61 @@ def get_cached_df(ticker, tf):
             
     cache_data[key] = df
     return df
+
+# === レーダー用 計算エンジン ===
+def calc_radar_indicators(df):
+    df['SMA100'] = df['Close'].rolling(window=100).mean()
+    high26 = df['High'].rolling(window=26).max()
+    low26 = df['Low'].rolling(window=26).min()
+    df['Kijun'] = (high26 + low26) / 2
+    return df
+
+def get_env_status(ticker):
+    status = {"match": False, "dir": "待機", "1h_k": 0, "1h_c": 0, "1h_sma": 0}
+    try:
+        df_1h = yf.download(ticker, period="10d", interval="1h", progress=False)
+        df_4h = yf.download(ticker, period="30d", interval="1h", progress=False).resample('4h').agg({'High':'max', 'Low':'min', 'Close':'last'}).dropna()
+        df_d = yf.download(ticker, period="60d", interval="1d", progress=False)
+        
+        if df_1h.empty or df_4h.empty or df_d.empty: return status
+        for df in [df_1h, df_4h, df_d]:
+            if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+
+        df_1h = calc_radar_indicators(df_1h)
+        df_4h = calc_radar_indicators(df_4h)
+        df_d = calc_radar_indicators(df_d)
+
+        c1, k1 = df_1h['Close'].iloc[-1], df_1h['Kijun'].iloc[-1]
+        c4, k4 = df_4h['Close'].iloc[-1], df_4h['Kijun'].iloc[-1]
+        cd, kd = df_d['Close'].iloc[-1], df_d['Kijun'].iloc[-1]
+        
+        dir1 = "買" if c1 > k1 else "売"
+        dir4 = "買" if c4 > k4 else "売"
+        dird = "買" if cd > kd else "売"
+
+        status["1h_c"] = float(c1)
+        status["1h_k"] = float(k1)
+        status["1h_sma"] = float(df_1h['SMA100'].iloc[-1])
+        status["dir"] = dir1
+        status["match"] = (dir1 == dir4 == dird)
+    except: pass
+    return status
+
+def get_15m_breakout_target(ticker, is_buy):
+    df = get_cached_df(ticker, "15分足")
+    if df.empty or len(df) < 10: return None
+    highs, lows = df['High'].squeeze(), df['Low'].squeeze()
+    
+    # 過去6・未来2 で最新の山(谷)を探索
+    for i in range(len(df)-3, 5, -1):
+        w_high = highs.iloc[i-6 : i+3]
+        w_low = lows.iloc[i-6 : i+3]
+        
+        if is_buy:
+            if highs.iloc[i] == w_high.max(): return float(highs.iloc[i])
+        else:
+            if lows.iloc[i] == w_low.min(): return float(lows.iloc[i])
+    return None
 
 def analyze_dow_trend(df):
     highs, lows, closes = df['High'].squeeze(), df['Low'].squeeze(), df['Close'].squeeze()
@@ -164,14 +177,10 @@ def eval_cond(cond, pp, ch, cl, ps, cs):
 
 def main():
     now_jst = datetime.utcnow() + timedelta(hours=9)
-    
     is_weekend = False
-    if now_jst.weekday() == 5 and now_jst.hour >= 8:
-        is_weekend = True
-    elif now_jst.weekday() == 6:
-        is_weekend = True
-    elif now_jst.weekday() == 0 and now_jst.hour < 6:
-        is_weekend = True
+    if now_jst.weekday() == 5 and now_jst.hour >= 8: is_weekend = True
+    elif now_jst.weekday() == 6: is_weekend = True
+    elif now_jst.weekday() == 0 and now_jst.hour < 6: is_weekend = True
 
     if is_weekend:
         print(f"💤 週末休場のため監視をスキップします ({now_jst.strftime('%Y-%m-%d %H:%M:%S')} JST)")
@@ -179,15 +188,14 @@ def main():
 
     data = load_data()
     alerts = data.get("alerts", [])
-    
     valid_alerts = []
     is_changed = False 
     
+    # 既存の通常・トレンドアラート処理
     for alert in alerts:
         if 'created_at' in alert:
             created_at = datetime.fromisoformat(alert['created_at'])
             if now_jst - created_at > timedelta(days=7): 
-                print(f"🗑️ 1週間経過したため自動削除: {alert['pair']}")
                 is_changed = True
                 continue 
 
@@ -195,7 +203,6 @@ def main():
         if limit_mode != 'なし（1週間で自動無効）' and alert.get('limit_dt'):
             limit_dt = datetime.fromisoformat(alert['limit_dt']).replace(tzinfo=None)
             if limit_mode == "指定日時まで有効" and now_jst > limit_dt:
-                print(f"🗑️ 期限切れのため自動削除: {alert['pair']}")
                 is_changed = True
                 continue
             if limit_mode == "指定日時以降に有効" and now_jst < limit_dt:
@@ -216,7 +223,6 @@ def main():
             curr_code = analyze_dow_trend(df)
             sit = alert['situation']
             base = alert.get('baseline_rate')
-            
             recent_closes = [float(v.iloc[0] if isinstance(v, pd.Series) else v) for v in df['Close'].tail(4)]
 
             if sit == "上昇トレンドが始まったら" and curr_code in [1, 2]: trigger = True
@@ -230,10 +236,8 @@ def main():
             if trigger:
                 msg = f"📈【トレンドアラート】\n{alert['pair']} ({alert['tf']})\n設定: {sit}\n現在値: {cp:.5f}\n条件を満たしました！"
                 send_line(msg)
-                print(f"✅ トレンドアラート発動 ({alert['pair']})")
                 is_changed = True
                 continue 
-
         else:
             df['SMA6'] = df['Close'].rolling(window=6).mean()
             df['SMA25'] = df['Close'].rolling(window=25).mean()
@@ -256,14 +260,11 @@ def main():
             if final_result:
                 alert['current_count'] = alert.get('current_count', 0) + 1
                 max_c = alert.get('max_count', 1)
-                
                 msg = f"🚨【FX通常アラート】 ({alert['current_count']}/{max_c}回目)\n通貨ペア: {alert['pair']} ({alert['tf']})\n現在値: {cp:.5f}\n(高値: {ch:.5f} / 安値: {cl:.5f})\n条件を満たしました！"
                 send_line(msg)
-                print(f"✅ 通常アラート発動 ({alert['pair']}) {alert['current_count']}/{max_c}回目")
                 is_changed = True
                 
-                if alert['current_count'] >= max_c:
-                    continue 
+                if alert['current_count'] >= max_c: continue 
                 else:
                     valid_alerts.append(alert) 
                     continue 
@@ -274,7 +275,7 @@ def main():
         data["alerts"] = valid_alerts
         is_changed = True
 
-    # === 【追加部品③】レーダー監視のメイン処理（骨組み） ===
+    # === 🌍 最強レーダーの心臓部（メイン処理） ===
     radar_data = data.get("radar", {})
     radar_changed = False
 
@@ -283,46 +284,111 @@ def main():
 
         ticker = pairs[pair_key]
         env = get_env_status(ticker)
+        if env["1h_c"] == 0: continue # データ取得失敗時はスキップ
         
-        if env["dir"] == "待機": continue
         is_buy = (env["dir"] == "買")
-
+        is_gc = env["1h_k"] > env["1h_sma"]
+        is_dc = env["1h_k"] < env["1h_sma"]
+        
+        # フェーズ1：開始待ち (GC/DCの監視と、0%ラインの更新)
         if state["phase"] == 1:
-            if is_buy and env["1h_k"] > env["1h_sma"]:
-                state["phase"] = 2
-                state["100_pct"] = env["1h_c"] 
-                state["0_pct"] = env["1h_c"]
-                state["timer"] = 0
-                state["notified"] = False
-                radar_changed = True
-
+            if is_buy and is_gc:
+                # 買いの場合、最高値を0%として更新し続ける
+                if env["1h_c"] > state.get("0_pct", 0):
+                    state["0_pct"] = env["1h_c"]
+                
+                # 価格が基準線を割ったらフェーズ2(準備期)へ
+                if env["1h_c"] < env["1h_k"]:
+                    # 初回はMA100を仮の100%ライン(防衛線)とする
+                    if state.get("100_pct", 0) == 0: state["100_pct"] = env["1h_sma"]
+                    state["phase"] = 2
+                    state["current_lowest"] = env["1h_c"] # 押し目の深さを記録開始
+                    state["timer"] = 0
+                    state["notified_p2"] = False
+                    state["notified_p3_count"] = 0
+                    radar_changed = True
+                    
+            elif not is_buy and is_dc:
+                # 売りの場合、最安値を0%として更新し続ける
+                if state.get("0_pct", 0) == 0 or env["1h_c"] < state["0_pct"]:
+                    state["0_pct"] = env["1h_c"]
+                
+                if env["1h_c"] > env["1h_k"]:
+                    if state.get("100_pct", 0) == 0: state["100_pct"] = env["1h_sma"]
+                    state["phase"] = 2
+                    state["current_lowest"] = env["1h_c"]
+                    state["timer"] = 0
+                    state["notified_p2"] = False
+                    state["notified_p3_count"] = 0
+                    radar_changed = True
+                    
+        # フェーズ2(準備期) ＆ フェーズ3(エントリー期)
         elif state["phase"] in [2, 3]:
-            # キャンセル条件：100%割れ、または72本経過
-            if (is_buy and env["1h_c"] < state["100_pct"]) or (not is_buy and env["1h_c"] > state["100_pct"]) or state.get("timer", 0) >= 72:
+            state["timer"] = state.get("timer", 0) + 1
+            
+            # 【撤退トリガー】 72本経過、100%割れ、または逆クロスで完全リセット
+            cancel = False
+            if state["timer"] >= 72: cancel = True
+            if is_buy and (env["1h_c"] < state["100_pct"] or is_dc): cancel = True
+            if not is_buy and (env["1h_c"] > state["100_pct"] or is_gc): cancel = True
+            
+            if cancel:
                 state["phase"] = 1
                 state["cycle"] = 1
+                state["100_pct"] = 0
+                state["0_pct"] = 0
                 radar_changed = True
                 continue
-            
-            # 継続ループ条件：0%（最高値）を上に更新
-            if is_buy:
-                if env["1h_c"] > state["0_pct"]:
-                    state["100_pct"] = state["0_pct"] 
-                    state["0_pct"] = env["1h_c"]
-                    state["phase"] = 1
-                    state["cycle"] = state.get("cycle", 1) + 1
-                    radar_changed = True
 
-            state["timer"] = state.get("timer", 0) + 1
+            # 押し目(戻り)の一番深い部分を記録
+            if is_buy: state["current_lowest"] = min(state.get("current_lowest", env["1h_c"]), env["1h_c"])
+            else: state["current_lowest"] = max(state.get("current_lowest", env["1h_c"]), env["1h_c"])
+
+            # 【ループトリガー】 0%更新で次のサイクルへ！
+            if (is_buy and env["1h_c"] > state["0_pct"]) or (not is_buy and env["1h_c"] < state["0_pct"]):
+                state["100_pct"] = state["current_lowest"] # 今回の押し目を新しい100%に昇格
+                state["0_pct"] = env["1h_c"]
+                state["phase"] = 1
+                state["cycle"] = state.get("cycle", 1) + 1
+                radar_changed = True
+                msg = f"🚀 【トレンド継続】\n🌍 {pair_key}\n0%ラインを更新しました！\n第{state['cycle']}サイクルの準備期(押し目)を待機します。"
+                send_line(msg)
+                continue
+
+            # 15分足のターゲット(山/谷)を取得
+            target_15m = get_15m_breakout_target(ticker, is_buy)
+            
+            # フェーズ2：準備期の通知とブレイク判定
+            if state["phase"] == 2:
+                if not state.get("notified_p2", False):
+                    msg = f"📉 【準備期 突入 (第{state.get('cycle', 1)}ｻｲｸﾙ)】\n🌍 {pair_key} : {'🟢 買い' if is_buy else '🔴 売り'}\n1時間足が基準線を割りました。\n15分足のブレイクアウトを待機します！"
+                    send_line(msg)
+                    state["notified_p2"] = True
+                    radar_changed = True
+                
+                # ブレイクアウト判定！
+                if target_15m:
+                    if (is_buy and env["1h_c"] > target_15m) or (not is_buy and env["1h_c"] < target_15m):
+                        state["phase"] = 3
+                        radar_changed = True
+            
+            # フェーズ3：エントリー期の通知（最大2回）
+            if state["phase"] == 3:
+                if state.get("notified_p3_count", 0) < 2:
+                    # 押し目の％計算 (フィボナッチ)
+                    range_diff = abs(state["0_pct"] - state["100_pct"])
+                    ret_pct = abs(state["0_pct"] - state["current_lowest"]) / range_diff * 100 if range_diff > 0 else 0
+                        
+                    msg = f"🔥 【エントリー期 (第{state.get('cycle', 1)}ｻｲｸﾙ)】\n🌍 {pair_key} : {'🟢 買い' if is_buy else '🔴 売り'}\n15分足の戻り高値をブレイクしました！\n📉 押し目の深さ：{ret_pct:.1f}%\n今すぐチャートを確認してください！"
+                    send_line(msg)
+                    state["notified_p3_count"] = state.get("notified_p3_count", 0) + 1
+                    radar_changed = True
 
     if radar_changed:
         data["radar"] = radar_data
         is_changed = True
-    # ======================================================
 
-    # 🌟 最終データ保存（通常アラートかレーダーに変更があった場合のみ）
-    if is_changed:
-        save_data(data)
+    if is_changed: save_data(data)
 
 if __name__ == "__main__":
     main()

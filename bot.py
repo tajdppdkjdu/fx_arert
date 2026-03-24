@@ -97,6 +97,8 @@ def get_env_status(ticker):
         dird = "買" if cd > kd else "売"
 
         status["1h_c"] = float(c1)
+        status["1h_h"] = float(df_1h['High'].iloc[-1]) # 🌟 これを追加！
+        status["1h_l"] = float(df_1h['Low'].iloc[-1])  # 🌟 これを追加！
         status["1h_k"] = float(k1)
         status["1h_sma"] = float(df_1h['SMA100'].iloc[-1])
         status["dir"] = dir1
@@ -303,33 +305,30 @@ def main():
         is_gc = env["1h_k"] > env["1h_sma"]
         is_dc = env["1h_k"] < env["1h_sma"]
         
+        # 🌟 ここから上書き 🌟
         # フェーズ1：開始待ち (GC/DCの監視と、0%ラインの更新)
         if state["phase"] == 1:
             if is_buy and is_gc:
-                # 買いの場合、最高値を0%として更新し続ける
-                if env["1h_c"] > state.get("0_pct", 0):
-                    state["0_pct"] = env["1h_c"]
+                if env["1h_h"] > state.get("0_pct", 0):  # 🌟 Highを参照
+                    state["0_pct"] = env["1h_h"]
                 
-                # 価格が基準線を割ったらフェーズ2(準備期)へ
                 if env["1h_c"] < env["1h_k"]:
-                    # 初回はMA100を仮の100%ライン(防衛線)とする
                     if state.get("100_pct", 0) == 0: state["100_pct"] = env["1h_sma"]
                     state["phase"] = 2
-                    state["current_lowest"] = env["1h_c"] # 押し目の深さを記録開始
+                    state["current_lowest"] = env["1h_l"]  # 🌟 Lowを参照
                     state["timer"] = 0
                     state["notified_p2"] = False
                     state["notified_p3_count"] = 0
                     radar_changed = True
                     
             elif not is_buy and is_dc:
-                # 売りの場合、最安値を0%として更新し続ける
-                if state.get("0_pct", 0) == 0 or env["1h_c"] < state["0_pct"]:
-                    state["0_pct"] = env["1h_c"]
+                if state.get("0_pct", 0) == 0 or env["1h_l"] < state["0_pct"]:  # 🌟 Lowを参照
+                    state["0_pct"] = env["1h_l"]
                 
                 if env["1h_c"] > env["1h_k"]:
                     if state.get("100_pct", 0) == 0: state["100_pct"] = env["1h_sma"]
                     state["phase"] = 2
-                    state["current_lowest"] = env["1h_c"]
+                    state["current_lowest"] = env["1h_h"]  # 🌟 Highを参照
                     state["timer"] = 0
                     state["notified_p2"] = False
                     state["notified_p3_count"] = 0
@@ -339,7 +338,7 @@ def main():
         elif state["phase"] in [2, 3]:
             state["timer"] = state.get("timer", 0) + 1
             
-            # 【撤退トリガー】 72本経過、100%割れ、または逆クロスで完全リセット
+            # 【撤退トリガー】 ダマシ回避のため終値(実体)判定をキープ
             cancel = False
             if state["timer"] >= 72: cancel = True
             if is_buy and (env["1h_c"] < state["100_pct"] or is_dc): cancel = True
@@ -353,21 +352,21 @@ def main():
                 radar_changed = True
                 continue
 
-            # 押し目(戻り)の一番深い部分を記録
-            if is_buy: state["current_lowest"] = min(state.get("current_lowest", env["1h_c"]), env["1h_c"])
-            else: state["current_lowest"] = max(state.get("current_lowest", env["1h_c"]), env["1h_c"])
+            # 押し目(戻り)の一番深い部分(ヒゲ先)を記録
+            if is_buy: state["current_lowest"] = min(state.get("current_lowest", env["1h_l"]), env["1h_l"])
+            else: state["current_lowest"] = max(state.get("current_lowest", env["1h_h"]), env["1h_h"])
 
-            # 【ループトリガー】 0%更新で次のサイクルへ！
-            if (is_buy and env["1h_c"] > state["0_pct"]) or (not is_buy and env["1h_c"] < state["0_pct"]):
-                state["100_pct"] = state["current_lowest"]
-                state["0_pct"] = env["1h_c"]
+            # 【ループトリガー】 0%更新(ヒゲ先)で次のサイクルへ！
+            if (is_buy and env["1h_h"] > state["0_pct"]) or (not is_buy and env["1h_l"] < state["0_pct"]):
+                state["100_pct"] = state["current_lowest"] 
+                state["0_pct"] = env["1h_h"] if is_buy else env["1h_l"]
                 state["phase"] = 1
                 state["cycle"] = state.get("cycle", 1) + 1
                 radar_changed = True
-                # 🌟 通知文を統一（フェーズ1）
                 msg = f"🚀 【①開始待ち (第{state['cycle']}ｻｲｸﾙ)】\n🌍 {pair_key} : {'🔴 買い' if is_buy else '🔵 売り'}\nトレンド継続！0%を更新しました。\n\n[基準レート]\n100%: {state['100_pct']:.5f}\n\n次の②準備期(押し目)を待機します。"
                 send_line(msg)
                 continue
+        # 🌟 ここまで上書き 🌟
 
             # 15分足のターゲット(山/谷)を取得
             target_15m = get_15m_breakout_target(ticker, is_buy)

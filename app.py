@@ -72,9 +72,7 @@ def analyze_dow_trend(df):
                     filtered[-1] = e
             else: filtered.append(e)
 
-    state = "レンジ"
-    last_trend = "なし"
-    baseline = None
+    state, last_trend, baseline = "レンジ", "なし", None
     h_hist, l_hist = [], []
     r_h1 = r_h2 = r_l1 = r_l2 = 0.0
     t_h1 = t_h2 = t_l1 = t_l2 = None
@@ -115,7 +113,7 @@ def analyze_dow_trend(df):
             "h1": r_h1, "h2": r_h2, "l1": r_l1, "l2": r_l2,
             "t_h1": t_h1, "t_h2": t_h2, "t_l1": t_l1, "t_l2": t_l2}
 
-# === 【追加部品①】レーダー用インジケーター計算 ===
+# === レーダー用 計算エンジン ===
 def calc_radar_indicators(df):
     df['SMA100'] = df['Close'].rolling(window=100).mean()
     high26 = df['High'].rolling(window=26).max()
@@ -123,7 +121,6 @@ def calc_radar_indicators(df):
     df['Kijun'] = (high26 + low26) / 2
     return df
 
-# === 【修正版】レーダー計算 ＆ 過去シミュレーション ===
 @st.cache_data(ttl=300, show_spinner=False)
 def get_env_status(ticker):
     status = {"match": False, "dir": "エラー", "1h_k": 0, "1h_c": 0, "1h_sma": 0, "sim_phase": 1, "sim_cycle": 1, "sim_0_pct": 0, "sim_100_pct": 0}
@@ -134,8 +131,7 @@ def get_env_status(ticker):
         if df_1h_30d.empty or df_d.empty: return status
 
         for df in [df_1h_30d, df_d]:
-            if isinstance(df.columns, pd.MultiIndex): 
-                df.columns = df.columns.get_level_values(0)
+            if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
 
         df_4h = df_1h_30d.resample('4h').agg({'High':'max', 'Low':'min', 'Close':'last'}).dropna()
 
@@ -185,8 +181,8 @@ def get_env_status(ticker):
 
         status["sim_phase"] = phase
         status["sim_cycle"] = cycle
-        status["sim_0_pct"] = pct_0      # 🌟 シミュレーション時の0%を保存
-        status["sim_100_pct"] = pct_100  # 🌟 シミュレーション時の100%を保存
+        status["sim_0_pct"] = pct_0
+        status["sim_100_pct"] = pct_100
 
         c1, k1 = df_1h_30d['Close'].iloc[-1], df_1h_30d['Kijun'].iloc[-1]
         c4, k4 = df_4h['Close'].iloc[-1], df_4h['Kijun'].iloc[-1]
@@ -205,104 +201,11 @@ def get_env_status(ticker):
         pass
     return status
 
-# === 【追加部品②】環境認識＆手法レーダー UI ===
-st.divider()
-st.subheader("🌍 環境認識＆手法レーダー (別枠監視)")
 
-radar_data = data.get("radar", {})
-
-with st.expander("レーダーを展開する", expanded=False):
-    if st.button("🔄 全通貨を一括取得する (※Yahoo制限に注意 / 数十秒かかります)"):
-        with st.spinner("全通貨のデータを取得中..."):
-            for pair_key, ticker in pairs.items():
-                st.session_state[f"env_cache_{pair_key}"] = get_env_status(ticker)
-
-    col_h1, col_h2, col_h3, col_h4, col_h5 = st.columns([2, 1.5, 2.5, 2.5, 1.5])
-    with col_h1: st.caption("通貨ペア")
-    with col_h2: st.caption("個別取得")
-    with col_h3: st.caption("目線 (環境認識)")
-    with col_h4: st.caption("フェーズ / 基準レート")
-    with col_h5: st.caption("個別監視")
-    st.write("---")
-
-    for pair_key, ticker in pairs.items():
-        if pair_key not in radar_data:
-            radar_data[pair_key] = {"active": False, "phase": 0, "cycle": 1, "0_pct": 0, "100_pct": 0}
-        
-        r_state = radar_data[pair_key]
-        col1, col2, col3, col4, col5 = st.columns([2, 1.5, 2.5, 2.5, 1.5])
-        
-        with col1:
-            st.write(f"**{pair_key}**")
-            
-        with col2:
-            if st.button("🔄", key=f"get_{pair_key}"):
-                with st.spinner(""):
-                    st.session_state[f"env_cache_{pair_key}"] = get_env_status(ticker)
-                    
-        with col3:
-            env_data = st.session_state.get(f"env_cache_{pair_key}")
-            if env_data:
-                if env_data['dir'] == "エラー":
-                    st.write("⚠️ 取得失敗")
-                else:
-                    mark = "🔴" if env_data['dir'] == "買" else "🔵" if env_data['dir'] == "売" else "⚪️"
-                    match_str = "〇" if env_data['match'] else "×"
-                    st.write(f"{mark} {env_data['dir']} (一致{match_str})")
-            else:
-                st.write("⚪️ 未取得")
-                
-        with col4:
-            if r_state["active"]:
-                # 🌟 監視中：bot.pyが記憶している正確なレートを表示！
-                p = r_state.get('phase', 0)
-                phase_map = {0: "待機中", 1: "①開始待ち", 2: "②準備待ち", 3: "③ｴﾝﾄﾘｰ待ち"}
-                st.write(f"**{phase_map.get(p, '待機中')}** (第{r_state.get('cycle', 1)}ｻｲｸﾙ)")
-                
-                p0 = r_state.get('0_pct', 0)
-                p100 = r_state.get('100_pct', 0)
-                tgt = r_state.get('target_15m', 0)
-                
-                if p == 1 and p100 != 0:
-                    st.code(f"100%: {p100:.3f}")
-                elif p == 2:
-                    st.code(f"0%: {p0:.3f}\n100%: {p100:.3f}")
-                elif p == 3 and tgt != 0:
-                    st.code(f"ﾌﾞﾚｲｸ基準: {tgt:.3f}")
-            else:
-                # 🌟 停止中：シミュレーションで算出したレートを表示！
-                if env_data and env_data['dir'] != "エラー":
-                    sim_p = env_data.get('sim_phase', 1)
-                    sim_c = env_data.get('sim_cycle', 1)
-                    sim_0 = env_data.get('sim_0_pct', 0)
-                    sim_100 = env_data.get('sim_100_pct', 0)
-                    
-                    p_str = "①開始待ち" if sim_p == 1 else "②準備/ｴﾝﾄﾘｰ"
-                    st.write(f"_{p_str}_ (第{sim_c}ｻｲｸﾙ)")
-                    
-                    if sim_p == 1 and sim_100 != 0:
-                        st.code(f"100%: {sim_100:.3f}")
-                    elif sim_p == 2 and sim_0 != 0:
-                        st.code(f"0%: {sim_0:.3f}\n100%: {sim_100:.3f}")
-                else:
-                    st.write("待機(停止中)")
-                
-        with col5:
-            btn_label = "🛑 停止" if r_state["active"] else "👀 監視"
-            if st.button(btn_label, key=f"btn_r_{pair_key}"):
-                r_state["active"] = not r_state["active"]
-                if r_state["active"]:
-                    r_state["phase"] = 1
-                    r_state["cycle"] = 1
-                else:
-                    r_state["phase"] = 0
-                data["radar"] = radar_data
-                save_data(data)
-                st.rerun()
-        st.write("---")
-# ===============================================
-
+# === メインUI ===
 st.title("FX 自動アラートシステム")
+
+# 🌟 大事なデータ読み込み！
 data = load_data()
 alerts = data.get("alerts", [])
 
@@ -505,7 +408,6 @@ for i, a in enumerate(alerts):
             st.caption(f"⏱️ 期限: {fmt_limit(a)}")
         else:
             st.markdown(f"**[{i+1}] 🔔 通常アラート | {a.get('pair', '不明')} ({a.get('tf', '不明')})**")
-            
             def fmt_cond(c):
                 if not c: return "不明"
                 t, d = c.get('type', '不明'), c.get('direction', '不明')
@@ -513,18 +415,15 @@ for i, a in enumerate(alerts):
                 if t == "② 価格×SMA": return f"{t} : {c.get('target_sma')} を {d}"
                 if t == "③ SMA×SMA": return f"{t} : {c.get('sma1')} が {c.get('sma2')} を {d}"
                 return f"{t} ({d})"
-
             st.write(f"A: {fmt_cond(a.get('cond_a'))}")
-            
             logic = a.get('logic', '条件Aのみ')
             cond_b = a.get('cond_b')
             if logic != "条件Aのみ" and cond_b is not None: 
                 st.write(f"{logic} \nB: {fmt_cond(cond_b)}")
-                
             remain = a.get('max_count', 1) - a.get('current_count', 0)
             st.caption(f"⏱️ 期限: {fmt_limit(a)} ｜ 残り回数: {remain} / {a.get('max_count', 1)} 回")
     except Exception as e:
-        st.warning(f"**[{i+1}] ⚠️ 読み込みエラー（旧形式のデータです）**")
+        st.warning(f"**[{i+1}] ⚠️ 読み込みエラー**")
     
     if st.button("削除", key=f"del_{i}"):
         alerts.pop(i)
@@ -541,21 +440,20 @@ if st.button("LINE開通テストを送信 ✉️"):
 # === 【追加部品②】環境認識＆手法レーダー UI ===
 st.divider()
 st.subheader("🌍 環境認識＆手法レーダー (別枠監視)")
-data = load_data()
+
 radar_data = data.get("radar", {})
 
 with st.expander("レーダーを展開する", expanded=False):
-    # 🌟 追加：一括取得ボタンを一番上に配置！
     if st.button("🔄 全通貨を一括取得する (※Yahoo制限に注意 / 数十秒かかります)"):
         with st.spinner("全通貨のデータを取得中..."):
             for pair_key, ticker in pairs.items():
                 st.session_state[f"env_cache_{pair_key}"] = get_env_status(ticker)
 
-    col_h1, col_h2, col_h3, col_h4, col_h5 = st.columns([2, 1.5, 2.5, 2, 2])
+    col_h1, col_h2, col_h3, col_h4, col_h5 = st.columns([2, 1.5, 2.5, 2.5, 1.5])
     with col_h1: st.caption("通貨ペア")
     with col_h2: st.caption("個別取得")
     with col_h3: st.caption("目線 (環境認識)")
-    with col_h4: st.caption("フェーズ")
+    with col_h4: st.caption("フェーズ / 基準レート")
     with col_h5: st.caption("個別監視")
     st.write("---")
 
@@ -564,26 +462,23 @@ with st.expander("レーダーを展開する", expanded=False):
             radar_data[pair_key] = {"active": False, "phase": 0, "cycle": 1, "0_pct": 0, "100_pct": 0}
         
         r_state = radar_data[pair_key]
-        
-        col1, col2, col3, col4, col5 = st.columns([2, 1.5, 2.5, 2, 2])
+        col1, col2, col3, col4, col5 = st.columns([2, 1.5, 2.5, 2.5, 1.5])
         
         with col1:
             st.write(f"**{pair_key}**")
             
         with col2:
-            # 個別取得ボタンもそのままキープ！
-            if st.button("🔄", key=f"get_{pair_key}", help=f"{pair_key}の環境を取得"):
+            if st.button("🔄", key=f"get_{pair_key}"):
                 with st.spinner(""):
                     st.session_state[f"env_cache_{pair_key}"] = get_env_status(ticker)
                     
         with col3:
             env_data = st.session_state.get(f"env_cache_{pair_key}")
             if env_data:
-                # 🌟 追加：エラー時の差別化表記！
                 if env_data['dir'] == "エラー":
-                    st.write("⚠️ 取得失敗(制限等)")
+                    st.write("⚠️ 取得失敗")
                 else:
-                    mark = "🟢" if env_data['dir'] == "買" else "🔴" if env_data['dir'] == "売" else "⚪️"
+                    mark = "🔴" if env_data['dir'] == "買" else "🔵" if env_data['dir'] == "売" else "⚪️"
                     match_str = "〇" if env_data['match'] else "×"
                     st.write(f"{mark} {env_data['dir']} (一致{match_str})")
             else:
@@ -591,11 +486,36 @@ with st.expander("レーダーを展開する", expanded=False):
                 
         with col4:
             if r_state["active"]:
+                p = r_state.get('phase', 0)
                 phase_map = {0: "待機中", 1: "①開始待ち", 2: "②準備待ち", 3: "③ｴﾝﾄﾘｰ待ち"}
-                st.write(f"**{phase_map.get(r_state['phase'], '待機中')}**")
-                st.caption(f"(第{r_state.get('cycle', 1)}ｻｲｸﾙ)")
+                st.write(f"**{phase_map.get(p, '待機中')}** (第{r_state.get('cycle', 1)}ｻｲｸﾙ)")
+                
+                p0 = r_state.get('0_pct', 0)
+                p100 = r_state.get('100_pct', 0)
+                tgt = r_state.get('target_15m', 0)
+                
+                if p == 1 and p100 != 0:
+                    st.code(f"100%: {p100:.3f}")
+                elif p == 2:
+                    st.code(f"0%: {p0:.3f}\n100%: {p100:.3f}")
+                elif p == 3 and tgt != 0:
+                    st.code(f"ﾌﾞﾚｲｸ基準: {tgt:.3f}")
             else:
-                st.write("待機(停止中)")
+                if env_data and env_data['dir'] != "エラー":
+                    sim_p = env_data.get('sim_phase', 1)
+                    sim_c = env_data.get('sim_cycle', 1)
+                    sim_0 = env_data.get('sim_0_pct', 0)
+                    sim_100 = env_data.get('sim_100_pct', 0)
+                    
+                    p_str = "①開始待ち" if sim_p == 1 else "②準備/ｴﾝﾄﾘｰ"
+                    st.write(f"_{p_str}_ (第{sim_c}ｻｲｸﾙ)")
+                    
+                    if sim_p == 1 and sim_100 != 0:
+                        st.code(f"100%: {sim_100:.3f}")
+                    elif sim_p == 2 and sim_0 != 0:
+                        st.code(f"0%: {sim_0:.3f}\n100%: {sim_100:.3f}")
+                else:
+                    st.write("待機(停止中)")
                 
         with col5:
             btn_label = "🛑 停止" if r_state["active"] else "👀 監視"
@@ -610,4 +530,3 @@ with st.expander("レーダーを展開する", expanded=False):
                 save_data(data)
                 st.rerun()
         st.write("---")
-# ===============================================

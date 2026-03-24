@@ -30,6 +30,46 @@ def load_data():
     if res.status_code == 200: return res.json().get("record", {})
     return {"alerts": [], "execution_logs": []}
 
+def calc_radar_indicators(df):
+    df['SMA100'] = df['Close'].rolling(window=100).mean()
+    high26 = df['High'].rolling(window=26).max()
+    low26 = df['Low'].rolling(window=26).min()
+    df['Kijun'] = (high26 + low26) / 2
+    return df
+
+def get_env_status(ticker):
+    status = {"match": False, "dir": "待機", "1h_k": 0, "1h_c": 0, "1h_sma": 0}
+    try:
+        df_1h = yf.download(ticker, period="10d", interval="1h", progress=False)
+        df_4h = yf.download(ticker, period="30d", interval="1h", progress=False).resample('4h').agg({'High':'max', 'Low':'min', 'Close':'last'}).dropna()
+        df_d = yf.download(ticker, period="60d", interval="1d", progress=False)
+        
+        if df_1h.empty or df_4h.empty or df_d.empty: return status
+
+        for df in [df_1h, df_4h, df_d]:
+            if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+
+        df_1h = calc_radar_indicators(df_1h)
+        df_4h = calc_radar_indicators(df_4h)
+        df_d = calc_radar_indicators(df_d)
+
+        c1, k1 = df_1h['Close'].iloc[-1], df_1h['Kijun'].iloc[-1]
+        c4, k4 = df_4h['Close'].iloc[-1], df_4h['Kijun'].iloc[-1]
+        cd, kd = df_d['Close'].iloc[-1], df_d['Kijun'].iloc[-1]
+        
+        dir1 = "買" if c1 > k1 else "売"
+        dir4 = "買" if c4 > k4 else "売"
+        dird = "買" if cd > kd else "売"
+
+        status["1h_c"] = float(c1)
+        status["1h_k"] = float(k1)
+        status["1h_sma"] = float(df_1h['SMA100'].iloc[-1])
+        status["dir"] = dir1
+        status["match"] = (dir1 == dir4 == dird)
+    except:
+        pass
+    return status
+    
 def save_data(data):
     url = f"https://api.jsonbin.io/v3/b/{JSONBIN_ID}"
     headers = {"X-Master-Key": JSONBIN_KEY, "Content-Type": "application/json"}
@@ -187,6 +227,74 @@ with tc3:
                     st.write(f"直前に起きていたトレンド：{res['last']}")
 
 st.divider()
+
+st.divider()
+st.subheader("🌍 環境認識＆手法レーダー (別枠監視)")
+
+radar_data = data.get("radar", {})
+
+with st.expander("レーダーを展開する", expanded=False):
+    for pair_key, ticker in pairs.items():
+        if pair_key not in radar_data:
+            radar_data[pair_key] = {"active": False, "phase": 0, "cycle": 1, "0_pct": 0, "100_pct": 0}
+        
+        r_state = radar_data[pair_key]
+        
+        col1, col2, col3, col4 = st.columns([2, 2, 2, 2])
+        with col1:
+            st.write(f"**{pair_key}**")
+        with col2:
+            env = get_env_status(ticker)
+            mark = "🟢" if env['dir'] == "買" else "🔴" if env['dir'] == "売" else "⚪️"
+            match_str = "〇" if env['match'] else "×"
+            st.write(f"{mark} {env['dir']} (一致{match_str})")
+        with col3:
+            phase_map = {0: "待機中", 1: "①開始待ち", 2: "②準備待ち", 3: "③ｴﾝﾄﾘｰ待ち"}
+            st.write(f"**{phase_map[r_state['phase']]}**")
+        with col4:
+            btn_label = "🛑 停止" if r_state["active"] else "👀 監視"
+            if st.button(btn_label, key=f"btn_r_{pair_key}"):
+                r_state["active"] = not r_state["active"]
+                if r_state["active"]:
+                    r_state["phase"] = 1
+                    r_state["cycle"] = 1
+                data["radar"] = radar_data
+                save_data(data)
+                st.rerun()
+        st.write("---")st.divider()
+st.subheader("🌍 環境認識＆手法レーダー (別枠監視)")
+
+radar_data = data.get("radar", {})
+
+with st.expander("レーダーを展開する", expanded=False):
+    for pair_key, ticker in pairs.items():
+        if pair_key not in radar_data:
+            radar_data[pair_key] = {"active": False, "phase": 0, "cycle": 1, "0_pct": 0, "100_pct": 0}
+        
+        r_state = radar_data[pair_key]
+        
+        col1, col2, col3, col4 = st.columns([2, 2, 2, 2])
+        with col1:
+            st.write(f"**{pair_key}**")
+        with col2:
+            env = get_env_status(ticker)
+            mark = "🟢" if env['dir'] == "買" else "🔴" if env['dir'] == "売" else "⚪️"
+            match_str = "〇" if env['match'] else "×"
+            st.write(f"{mark} {env['dir']} (一致{match_str})")
+        with col3:
+            phase_map = {0: "待機中", 1: "①開始待ち", 2: "②準備待ち", 3: "③ｴﾝﾄﾘｰ待ち"}
+            st.write(f"**{phase_map[r_state['phase']]}**")
+        with col4:
+            btn_label = "🛑 停止" if r_state["active"] else "👀 監視"
+            if st.button(btn_label, key=f"btn_r_{pair_key}"):
+                r_state["active"] = not r_state["active"]
+                if r_state["active"]:
+                    r_state["phase"] = 1
+                    r_state["cycle"] = 1
+                data["radar"] = radar_data
+                save_data(data)
+                st.rerun()
+        st.write("---")
 
 if len(alerts) >= MAX_ALERTS_LIMIT:
     st.warning(f"登録上限（{MAX_ALERTS_LIMIT}個）です。")

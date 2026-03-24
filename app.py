@@ -140,8 +140,11 @@ def get_env_status(ticker):
         last_mode = None
 
         df_sim = df_1h_30d.dropna(subset=['SMA100', 'Kijun']).tail(336)
+        
         for i in range(len(df_sim)):
-            c, k, sma = float(df_sim['Close'].iloc[i]), float(df_sim['Kijun'].iloc[i]), float(df_sim['SMA100'].iloc[i])
+            # Closeに加えて、High(高値)とLow(安値)も取得！
+            c, h, l = float(df_sim['Close'].iloc[i]), float(df_sim['High'].iloc[i]), float(df_sim['Low'].iloc[i])
+            k, sma = float(df_sim['Kijun'].iloc[i]), float(df_sim['SMA100'].iloc[i])
             is_buy_mode = (k > sma)
             
             if last_mode is not None and is_buy_mode != last_mode:
@@ -150,30 +153,31 @@ def get_env_status(ticker):
 
             if phase == 1:
                 if is_buy_mode:
-                    if c > pct_0: pct_0 = c
+                    if h > pct_0: pct_0 = h  # 🌟 0%をヒゲ先(高値)で更新
                     if c < k:
                         if pct_100 == 0: pct_100 = sma
-                        phase, current_lowest, timer = 2, c, 0
+                        phase, current_lowest, timer = 2, l, 0  # 🌟 押し目をヒゲ先(安値)で記録開始
                 else:
-                    if pct_0 == 0 or c < pct_0: pct_0 = c
+                    if pct_0 == 0 or l < pct_0: pct_0 = l  # 🌟 0%をヒゲ先(安値)で更新
                     if c > k:
                         if pct_100 == 0: pct_100 = sma
-                        phase, current_lowest, timer = 2, c, 0
+                        phase, current_lowest, timer = 2, h, 0  # 🌟 戻りをヒゲ先(高値)で記録開始
             else:
                 timer += 1
+                # 撤退判定はダマシ回避のため実体(c)のままキープ
                 cancel = (timer >= 72) or (is_buy_mode and c < pct_100) or (not is_buy_mode and c > pct_100)
                 if cancel:
                     phase, cycle, pct_0, pct_100 = 1, 1, 0.0, 0.0
                     continue
                 
                 if is_buy_mode:
-                    current_lowest = min(current_lowest, c)
-                    if c > pct_0:
-                        pct_100, pct_0, phase, cycle = current_lowest, c, 1, cycle + 1
+                    current_lowest = min(current_lowest, l)  # 🌟 一番深い安値を記録
+                    if h > pct_0:  # 🌟 ヒゲ先が0%を抜けたら次サイクルへ
+                        pct_100, pct_0, phase, cycle = current_lowest, h, 1, cycle + 1
                 else:
-                    current_lowest = max(current_lowest, c)
-                    if c < pct_0:
-                        pct_100, pct_0, phase, cycle = current_lowest, c, 1, cycle + 1
+                    current_lowest = max(current_lowest, h)  # 🌟 一番高い高値を記録
+                    if l < pct_0:  # 🌟 ヒゲ先が0%を抜けたら次サイクルへ
+                        pct_100, pct_0, phase, cycle = current_lowest, l, 1, cycle + 1
 
         status["sim_phase"] = phase
         status["sim_cycle"] = cycle

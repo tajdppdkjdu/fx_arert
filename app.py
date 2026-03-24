@@ -125,7 +125,7 @@ def calc_radar_indicators(df):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_env_status(ticker):
-    status = {"match": False, "dir": "待機", "1h_k": 0, "1h_c": 0, "1h_sma": 0}
+    status = {"match": False, "dir": "エラー", "1h_k": 0, "1h_c": 0, "1h_sma": 0}
     try:
         df_1h = yf.download(ticker, period="10d", interval="1h", progress=False)
         df_4h = yf.download(ticker, period="30d", interval="1h", progress=False).resample('4h').agg({'High':'max', 'Low':'min', 'Close':'last'}).dropna()
@@ -394,17 +394,22 @@ if st.button("LINE開通テストを送信 ✉️"):
     send_line("FXアラート: 開通テスト成功！")
     st.success("送信しました")
 
-## === 【追加部品②】環境認識＆手法レーダー UI ===
+# === 【追加部品②】環境認識＆手法レーダー UI ===
 st.divider()
 st.subheader("🌍 環境認識＆手法レーダー (別枠監視)")
 
 radar_data = data.get("radar", {})
 
 with st.expander("レーダーを展開する", expanded=False):
-    # 5つの列に分けてスッキリ配置！
+    # 🌟 追加：一括取得ボタンを一番上に配置！
+    if st.button("🔄 全通貨を一括取得する (※Yahoo制限に注意 / 数十秒かかります)"):
+        with st.spinner("全通貨のデータを取得中..."):
+            for pair_key, ticker in pairs.items():
+                st.session_state[f"env_cache_{pair_key}"] = get_env_status(ticker)
+
     col_h1, col_h2, col_h3, col_h4, col_h5 = st.columns([2, 1.5, 2.5, 2, 2])
     with col_h1: st.caption("通貨ペア")
-    with col_h2: st.caption("取得")
+    with col_h2: st.caption("個別取得")
     with col_h3: st.caption("目線 (環境認識)")
     with col_h4: st.caption("フェーズ")
     with col_h5: st.caption("個別監視")
@@ -422,19 +427,21 @@ with st.expander("レーダーを展開する", expanded=False):
             st.write(f"**{pair_key}**")
             
         with col2:
-            # 🔄 個別取得ボタン！押した時だけ3回通信する
+            # 個別取得ボタンもそのままキープ！
             if st.button("🔄", key=f"get_{pair_key}", help=f"{pair_key}の環境を取得"):
                 with st.spinner(""):
-                    # 取得した結果を画面の記憶(session_state)に保存！
                     st.session_state[f"env_cache_{pair_key}"] = get_env_status(ticker)
                     
         with col3:
-            # 記憶にデータがあれば表示、なければ「未取得」
             env_data = st.session_state.get(f"env_cache_{pair_key}")
             if env_data:
-                mark = "🟢" if env_data['dir'] == "買" else "🔴" if env_data['dir'] == "売" else "⚪️"
-                match_str = "〇" if env_data['match'] else "×"
-                st.write(f"{mark} {env_data['dir']} (一致{match_str})")
+                # 🌟 追加：エラー時の差別化表記！
+                if env_data['dir'] == "エラー":
+                    st.write("⚠️ 取得失敗(制限等)")
+                else:
+                    mark = "🟢" if env_data['dir'] == "買" else "🔴" if env_data['dir'] == "売" else "⚪️"
+                    match_str = "〇" if env_data['match'] else "×"
+                    st.write(f"{mark} {env_data['dir']} (一致{match_str})")
             else:
                 st.write("⚪️ 未取得")
                 

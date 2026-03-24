@@ -62,16 +62,24 @@ def calc_radar_indicators(df):
 def get_env_status(ticker):
     status = {"dir": "エラー", "1h_c": 0}
     try:
-        df_1h = yf.download(ticker, period="10d", interval="1h", progress=False)
+        df_1h = yf.download(ticker, period="30d", interval="1h", progress=False)
         if df_1h.empty: return status
         if isinstance(df_1h.columns, pd.MultiIndex): df_1h.columns = df_1h.columns.get_level_values(0)
         df_1h = calc_radar_indicators(df_1h)
+        
         status["1h_c"] = float(df_1h['Close'].iloc[-1])
         status["1h_h"] = float(df_1h['High'].iloc[-1])
         status["1h_l"] = float(df_1h['Low'].iloc[-1])
         status["1h_k"] = float(df_1h['Kijun'].iloc[-1])
         status["1h_sma"] = float(df_1h['SMA100'].iloc[-1])
         status["time_now"] = df_1h.index[-1].isoformat()
+
+        df_clean = df_1h.dropna(subset=['SMA100', 'Kijun'])
+        if not df_clean.empty:
+            is_buy_series = df_clean['Kijun'] > df_clean['SMA100']
+            changes = is_buy_series[is_buy_series != is_buy_series.shift(1)]
+            cross_time = changes.index[-1] if len(changes) > 1 else df_clean.index[0]
+            status["cross_time"] = cross_time.isoformat()
     except Exception: pass
     return status
 
@@ -107,8 +115,6 @@ def main():
     if is_weekend: return
 
     data = load_data()
-    
-    # === レーダー心臓部 ===
     radar_data = data.get("radar", {})
     radar_changed = False
 
@@ -122,13 +128,12 @@ def main():
         is_buy = (env["1h_k"] > env["1h_sma"])
         time_now = env["time_now"]
 
-        # 🌟 フェーズ4 (方向感無し) からの復帰ロジック
         if state["phase"] == 4:
             if is_buy and env["1h_c"] > env["1h_k"]:
-                state.update({"phase": 1, "cycle": 1, "0_pct": env["1h_h"], "time_0": time_now})
+                state.update({"phase": 1, "cycle": 1, "0_pct": env["1h_h"], "time_0": time_now, "target_15m": 0, "time_tgt": ""})
                 radar_changed = True
             elif not is_buy and env["1h_c"] < env["1h_k"]:
-                state.update({"phase": 1, "cycle": 1, "0_pct": env["1h_l"], "time_0": time_now})
+                state.update({"phase": 1, "cycle": 1, "0_pct": env["1h_l"], "time_0": time_now, "target_15m": 0, "time_tgt": ""})
                 radar_changed = True
             continue
 
@@ -151,14 +156,13 @@ def main():
         elif state["phase"] in [2, 3]:
             state["timer"] = state.get("timer", 0) + 1
             
-            # 🌟 100%割れ等の矛盾で「方向感無し(Phase 4)」へ
             cancel = False
             if state["timer"] >= 72: cancel = True
             if is_buy and (env["1h_c"] < state["100_pct"]): cancel = True
             if not is_buy and (env["1h_c"] > state["100_pct"]): cancel = True
             
             if cancel:
-                state.update({"phase": 4, "cycle": 1, "100_pct": 0, "0_pct": 0})
+                state.update({"phase": 4, "cycle": 1, "100_pct": 0, "0_pct": 0, "target_15m": 0, "time_tgt": ""})
                 radar_changed = True
                 continue
 
@@ -169,14 +173,13 @@ def main():
                 if env["1h_h"] > state.get("current_lowest", env["1h_h"]):
                     state["current_lowest"], state["current_lowest_time"] = env["1h_h"], time_now
 
-            # 0%更新で次サイクルへ
             if (is_buy and env["1h_h"] > state["0_pct"]) or (not is_buy and env["1h_l"] < state["0_pct"]):
                 state["100_pct"], state["time_100"] = state["current_lowest"], state["current_lowest_time"]
                 state["0_pct"], state["time_0"] = (env["1h_h"], time_now) if is_buy else (env["1h_l"], time_now)
-                state["phase"] = 1
-                state["cycle"] = state.get("cycle", 1) + 1
+                state.update({"phase": 1, "cycle": state.get("cycle", 1) + 1, "target_15m": 0, "time_tgt": ""})
                 radar_changed = True
-                msg = f"🚀 【①開始待ち (第{state['cycle']}ｻｲｸﾙ)】\n🌍 {pair_key} : {'🔴 買い目線' if is_buy else '🔵 売り目線'}\nトレンド継続！0%を更新しました。\n\n[基準レート]\n100%: {state['100_pct']:.5f} ({fmt_t(state['time_100'])})\n\n次の②準備期(押し目)を待機します。"
+                cross_str = f" ({fmt_t(env.get('cross_time'))}〜)" if env.get('cross_time') else ""
+                msg = f"🚀 【①開始待ち (第{state['cycle']}ｻｲｸﾙ)】\n🌍 {pair_key} : {'🔴 買い目線' if is_buy else '🔵 売り目線'}{cross_str}\nトレンド継続！0%を更新しました。\n\n[基準レート]\n100%: {state['100_pct']:.5f} ({fmt_t(state['time_100'])})\n\n次の②準備期(押し目)を待機します。"
                 send_line(msg)
                 continue
 
@@ -186,7 +189,9 @@ def main():
             
             if state["phase"] == 2:
                 if not state.get("notified_p2", False):
-                    msg = f"📉 【②準備待ち (第{state.get('cycle', 1)}ｻｲｸﾙ)】\n🌍 {pair_key} : {'🔴 買い目線' if is_buy else '🔵 売り目線'}\n1時間足が基準線を割りました。\n\n[基準レート]\n0%: {state['0_pct']:.5f} ({fmt_t(state['time_0'])})\n100%: {state['100_pct']:.5f} ({fmt_t(state['time_100'])})\n\n15分足のブレイクアウトを待機します！"
+                    cross_str = f" ({fmt_t(env.get('cross_time'))}〜)" if env.get('cross_time') else ""
+                    tgt_str = f"\nﾌﾞﾚｲｸ基準: {target_15m:.5f} ({fmt_t(target_time)})" if target_15m else "\nﾌﾞﾚｲｸ基準: 探索中..."
+                    msg = f"📉 【②準備待ち (第{state.get('cycle', 1)}ｻｲｸﾙ)】\n🌍 {pair_key} : {'🔴 買い目線' if is_buy else '🔵 売り目線'}{cross_str}\n1時間足が基準線を割りました。\n\n[基準レート]\n0%: {state['0_pct']:.5f} ({fmt_t(state['time_0'])})\n100%: {state['100_pct']:.5f} ({fmt_t(state['time_100'])}){tgt_str}\n\n15分足のブレイクアウトを待機します！"
                     send_line(msg)
                     state["notified_p2"] = True
                     radar_changed = True
@@ -201,7 +206,8 @@ def main():
                     range_diff = abs(state["0_pct"] - state["100_pct"])
                     ret_pct = abs(state["0_pct"] - state["current_lowest"]) / range_diff * 100 if range_diff > 0 else 0
                     tgt, ttgt = state.get('target_15m', 0), state.get('time_tgt', '')
-                    msg = f"🔥 【③ｴﾝﾄﾘｰ待ち (第{state.get('cycle', 1)}ｻｲｸﾙ)】\n🌍 {pair_key} : {'🔴 買い目線' if is_buy else '🔵 売り目線'}\n15分足の戻り高値をブレイクしました！\n\n[基準レート]\nﾌﾞﾚｲｸ基準: {tgt:.5f} ({fmt_t(ttgt)})\n📉 押し目の深さ：{ret_pct:.1f}%\n\n今すぐチャートを確認してください！"
+                    cross_str = f" ({fmt_t(env.get('cross_time'))}〜)" if env.get('cross_time') else ""
+                    msg = f"🔥 【③ｴﾝﾄﾘｰ待ち (第{state.get('cycle', 1)}ｻｲｸﾙ)】\n🌍 {pair_key} : {'🔴 買い目線' if is_buy else '🔵 売り目線'}{cross_str}\n15分足の戻り高値をブレイクしました！\n\n[基準レート]\nﾌﾞﾚｲｸ基準: {tgt:.5f} ({fmt_t(ttgt)})\n📉 押し目の深さ：{ret_pct:.1f}%\n\n今すぐチャートを確認してください！"
                     send_line(msg)
                     state["notified_p3_count"] = state.get("notified_p3_count", 0) + 1
                     radar_changed = True

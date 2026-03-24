@@ -370,6 +370,8 @@ def main():
 
             # 15分足のターゲット(山/谷)を取得
             target_15m = get_15m_breakout_target(ticker, is_buy)
+            if target_15m:
+                state["target_15m"] = target_15m # 🌟 アプリ画面に表示するために金庫に保存！
             
             # フェーズ2：準備期の通知とブレイク判定
             if state["phase"] == 2:

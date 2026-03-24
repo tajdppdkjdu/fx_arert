@@ -394,59 +394,69 @@ if st.button("LINE開通テストを送信 ✉️"):
     send_line("FXアラート: 開通テスト成功！")
     st.success("送信しました")
 
-# === 【追加部品②】環境認識＆手法レーダー UI ===
+## === 【追加部品②】環境認識＆手法レーダー UI ===
 st.divider()
 st.subheader("🌍 環境認識＆手法レーダー (別枠監視)")
 
 radar_data = data.get("radar", {})
 
 with st.expander("レーダーを展開する", expanded=False):
-    on_radar = st.toggle("🔄 最新の相場環境を取得・表示する (※初回は数秒かかります)")
-    
-    if on_radar:
-        col_h1, col_h2, col_h3, col_h4 = st.columns([2, 3, 2, 2])
-        with col_h1: st.caption("通貨ペア")
-        with col_h2: st.caption("目線 (環境認識)")
-        with col_h3: st.caption("フェーズ")
-        with col_h4: st.caption("個別監視")
-        st.write("---")
+    # 5つの列に分けてスッキリ配置！
+    col_h1, col_h2, col_h3, col_h4, col_h5 = st.columns([2, 1.5, 2.5, 2, 2])
+    with col_h1: st.caption("通貨ペア")
+    with col_h2: st.caption("取得")
+    with col_h3: st.caption("目線 (環境認識)")
+    with col_h4: st.caption("フェーズ")
+    with col_h5: st.caption("個別監視")
+    st.write("---")
 
-        for pair_key, ticker in pairs.items():
-            if pair_key not in radar_data:
-                radar_data[pair_key] = {"active": False, "phase": 0, "cycle": 1, "0_pct": 0, "100_pct": 0}
+    for pair_key, ticker in pairs.items():
+        if pair_key not in radar_data:
+            radar_data[pair_key] = {"active": False, "phase": 0, "cycle": 1, "0_pct": 0, "100_pct": 0}
+        
+        r_state = radar_data[pair_key]
+        
+        col1, col2, col3, col4, col5 = st.columns([2, 1.5, 2.5, 2, 2])
+        
+        with col1:
+            st.write(f"**{pair_key}**")
             
-            r_state = radar_data[pair_key]
-            
-            col1, col2, col3, col4 = st.columns([2, 3, 2, 2])
-            
-            with col1:
-                st.write(f"**{pair_key}**")
-                
-            with col2:
-                env = get_env_status(ticker)
-                mark = "🟢" if env['dir'] == "買" else "🔴" if env['dir'] == "売" else "⚪️"
-                match_str = "〇" if env['match'] else "×"
-                st.write(f"{mark} {env['dir']} (一致{match_str})")
-                
-            with col3:
-                if r_state["active"]:
-                    phase_map = {0: "待機中", 1: "①開始待ち", 2: "②準備待ち", 3: "③ｴﾝﾄﾘｰ待ち"}
-                    st.write(f"**{phase_map.get(r_state['phase'], '待機中')}**")
-                    st.caption(f"(第{r_state.get('cycle', 1)}ｻｲｸﾙ)")
-                else:
-                    st.write("待機(停止中)")
+        with col2:
+            # 🔄 個別取得ボタン！押した時だけ3回通信する
+            if st.button("🔄", key=f"get_{pair_key}", help=f"{pair_key}の環境を取得"):
+                with st.spinner(""):
+                    # 取得した結果を画面の記憶(session_state)に保存！
+                    st.session_state[f"env_cache_{pair_key}"] = get_env_status(ticker)
                     
-            with col4:
-                btn_label = "🛑 停止" if r_state["active"] else "👀 監視"
-                if st.button(btn_label, key=f"btn_r_{pair_key}"):
-                    r_state["active"] = not r_state["active"]
-                    if r_state["active"]:
-                        r_state["phase"] = 1
-                        r_state["cycle"] = 1
-                    else:
-                        r_state["phase"] = 0
-                    data["radar"] = radar_data
-                    save_data(data)
-                    st.rerun()
-            st.write("---")
+        with col3:
+            # 記憶にデータがあれば表示、なければ「未取得」
+            env_data = st.session_state.get(f"env_cache_{pair_key}")
+            if env_data:
+                mark = "🟢" if env_data['dir'] == "買" else "🔴" if env_data['dir'] == "売" else "⚪️"
+                match_str = "〇" if env_data['match'] else "×"
+                st.write(f"{mark} {env_data['dir']} (一致{match_str})")
+            else:
+                st.write("⚪️ 未取得")
+                
+        with col4:
+            if r_state["active"]:
+                phase_map = {0: "待機中", 1: "①開始待ち", 2: "②準備待ち", 3: "③ｴﾝﾄﾘｰ待ち"}
+                st.write(f"**{phase_map.get(r_state['phase'], '待機中')}**")
+                st.caption(f"(第{r_state.get('cycle', 1)}ｻｲｸﾙ)")
+            else:
+                st.write("待機(停止中)")
+                
+        with col5:
+            btn_label = "🛑 停止" if r_state["active"] else "👀 監視"
+            if st.button(btn_label, key=f"btn_r_{pair_key}"):
+                r_state["active"] = not r_state["active"]
+                if r_state["active"]:
+                    r_state["phase"] = 1
+                    r_state["cycle"] = 1
+                else:
+                    r_state["phase"] = 0
+                data["radar"] = radar_data
+                save_data(data)
+                st.rerun()
+        st.write("---")
 # ===============================================

@@ -541,7 +541,7 @@ if st.button("LINE開通テストを送信 ✉️"):
 # === 【追加部品②】環境認識＆手法レーダー UI ===
 st.divider()
 st.subheader("🌍 環境認識＆手法レーダー (別枠監視)")
-
+data = load_data()
 radar_data = data.get("radar", {})
 
 with st.expander("レーダーを展開する", expanded=False):

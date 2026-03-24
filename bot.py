@@ -359,24 +359,26 @@ def main():
 
             # 【ループトリガー】 0%更新で次のサイクルへ！
             if (is_buy and env["1h_c"] > state["0_pct"]) or (not is_buy and env["1h_c"] < state["0_pct"]):
-                state["100_pct"] = state["current_lowest"] # 今回の押し目を新しい100%に昇格
+                state["100_pct"] = state["current_lowest"]
                 state["0_pct"] = env["1h_c"]
                 state["phase"] = 1
                 state["cycle"] = state.get("cycle", 1) + 1
                 radar_changed = True
-                msg = f"🚀 【トレンド継続】\n🌍 {pair_key}\n0%ラインを更新しました！\n第{state['cycle']}サイクルの準備期(押し目)を待機します。"
+                # 🌟 通知文を統一（フェーズ1）
+                msg = f"🚀 【①開始待ち (第{state['cycle']}ｻｲｸﾙ)】\n🌍 {pair_key} : {'🔴 買い' if is_buy else '🔵 売り'}\nトレンド継続！0%を更新しました。\n\n[基準レート]\n100%: {state['100_pct']:.5f}\n\n次の②準備期(押し目)を待機します。"
                 send_line(msg)
                 continue
 
             # 15分足のターゲット(山/谷)を取得
             target_15m = get_15m_breakout_target(ticker, is_buy)
             if target_15m:
-                state["target_15m"] = target_15m # 🌟 アプリ画面に表示するために金庫に保存！
+                state["target_15m"] = target_15m 
             
             # フェーズ2：準備期の通知とブレイク判定
             if state["phase"] == 2:
                 if not state.get("notified_p2", False):
-                    msg = f"📉 【準備期 突入 (第{state.get('cycle', 1)}ｻｲｸﾙ)】\n🌍 {pair_key} : {'🟢 買い' if is_buy else '🔴 売り'}\n1時間足が基準線を割りました。\n15分足のブレイクアウトを待機します！"
+                    # 🌟 通知文を統一（フェーズ2）
+                    msg = f"📉 【②準備待ち (第{state.get('cycle', 1)}ｻｲｸﾙ)】\n🌍 {pair_key} : {'🔴 買い' if is_buy else '🔵 売り'}\n1時間足が基準線を割りました。\n\n[基準レート]\n0%: {state['0_pct']:.5f}\n100%: {state['100_pct']:.5f}\n\n15分足のブレイクアウトを待機します！"
                     send_line(msg)
                     state["notified_p2"] = True
                     radar_changed = True
@@ -390,11 +392,12 @@ def main():
             # フェーズ3：エントリー期の通知（最大2回）
             if state["phase"] == 3:
                 if state.get("notified_p3_count", 0) < 2:
-                    # 押し目の％計算 (フィボナッチ)
                     range_diff = abs(state["0_pct"] - state["100_pct"])
                     ret_pct = abs(state["0_pct"] - state["current_lowest"]) / range_diff * 100 if range_diff > 0 else 0
                         
-                    msg = f"🔥 【エントリー期 (第{state.get('cycle', 1)}ｻｲｸﾙ)】\n🌍 {pair_key} : {'🟢 買い' if is_buy else '🔴 売り'}\n15分足の戻り高値をブレイクしました！\n📉 押し目の深さ：{ret_pct:.1f}%\n今すぐチャートを確認してください！"
+                    tgt = state.get('target_15m', 0)
+                    # 🌟 通知文を統一（フェーズ3）
+                    msg = f"🔥 【③ｴﾝﾄﾘｰ待ち (第{state.get('cycle', 1)}ｻｲｸﾙ)】\n🌍 {pair_key} : {'🔴 買い' if is_buy else '🔵 売り'}\n15分足の戻り高値をブレイクしました！\n\n[基準レート]\nﾌﾞﾚｲｸ基準: {tgt:.5f}\n📉 押し目の深さ：{ret_pct:.1f}%\n\n今すぐチャートを確認してください！"
                     send_line(msg)
                     state["notified_p3_count"] = state.get("notified_p3_count", 0) + 1
                     radar_changed = True

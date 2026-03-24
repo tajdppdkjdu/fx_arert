@@ -112,7 +112,7 @@ def fmt_dt_str(t):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_env_status(ticker):
-    status = {"dir": "エラー", "dir_1h": "-", "dir_4h": "-", "dir_d": "-", "1h_k": 0, "1h_c": 0, "sim_phase": 1, "sim_cycle": 1, "sim_0_pct": 0, "sim_100_pct": 0, "time_0": None, "time_100": None}
+    status = {"dir": "エラー", "dir_1h": "-", "dir_4h": "-", "dir_d": "-", "sim_phase": 1, "sim_cycle": 1, "sim_0_pct": 0, "sim_100_pct": 0, "time_0": None, "time_100": None, "cross_time": None}
     try:
         df_1h_30d = yf.download(ticker, period="30d", interval="1h", progress=False)
         df_d = yf.download(ticker, period="60d", interval="1d", progress=False)
@@ -127,7 +127,7 @@ def get_env_status(ticker):
         phase, cycle = 1, 1
         pct_0, pct_100, current_lowest = 0.0, 0.0, 0.0
         time_0, time_100, current_lowest_time = None, None, None
-        timer, last_mode = 0, None
+        timer, last_mode, cross_time = 0, None, None
 
         df_sim = df_1h_30d.dropna(subset=['SMA100', 'Kijun']).tail(336)
         for i in range(len(df_sim)):
@@ -136,6 +136,7 @@ def get_env_status(ticker):
             t = df_sim.index[i]
             is_buy_mode = (k > sma)
             if last_mode is not None and is_buy_mode != last_mode:
+                cross_time = t
                 phase, cycle, pct_0, pct_100, time_0, time_100 = 1, 1, 0.0, 0.0, None, None
             last_mode = is_buy_mode
 
@@ -179,7 +180,7 @@ def get_env_status(ticker):
             "dir": main_dir,
             "dir_1h": "買" if c1 > k1 else "売", "dir_4h": "買" if c4 > k4 else "売", "dir_d": "買" if cd > kd else "売",
             "sim_phase": phase, "sim_cycle": cycle, "sim_0_pct": pct_0, "sim_100_pct": pct_100,
-            "time_0": fmt_dt_str(time_0), "time_100": fmt_dt_str(time_100)
+            "time_0": fmt_dt_str(time_0), "time_100": fmt_dt_str(time_100), "cross_time": fmt_dt_str(cross_time)
         })
     except Exception as e: pass
     return status
@@ -260,7 +261,9 @@ with st.expander("レーダーを展開する", expanded=False):
                 if env_data['dir'] == "エラー": st.write("⚠️ 取得失敗")
                 else:
                     mark = "🔴" if env_data['dir'] == "買い目線" else "🔵" if env_data['dir'] == "売り目線" else "⚪️"
-                    st.write(f"{mark} {env_data['dir']}")
+                    cross_t = fmt_t(env_data.get('cross_time'))
+                    cross_str = f" ({cross_t}〜)" if cross_t else ""
+                    st.write(f"{mark} {env_data['dir']}{cross_str}")
                     st.caption(f"1H:{env_data.get('dir_1h')} / 4H:{env_data.get('dir_4h')} / 日:{env_data.get('dir_d')}")
             else: st.write("⚪️ 未取得")
         with col4:
@@ -271,9 +274,12 @@ with st.expander("レーダーを展開する", expanded=False):
                 p0, p100, tgt = r_state.get('0_pct', 0), r_state.get('100_pct', 0), r_state.get('target_15m', 0)
                 t0, t100, ttgt = r_state.get('time_0'), r_state.get('time_100'), r_state.get('time_tgt')
                 
+                # 🌟 フェーズ2でも tgt (ブレイク基準) を表示するように変更！
+                tgt_str = f"\nﾌﾞﾚｲｸ: {tgt:.5f} ({fmt_t(ttgt)})" if tgt else "\nﾌﾞﾚｲｸ: 探索中..."
+                
                 if p == 1 and p100 != 0: st.code(f"100%: {p100:.5f} ({fmt_t(t100)})")
-                elif p == 2: st.code(f"0%: {p0:.5f} ({fmt_t(t0)})\n100%: {p100:.5f} ({fmt_t(t100)})")
-                elif p == 3 and tgt != 0: st.code(f"ﾌﾞﾚｲｸ: {tgt:.5f} ({fmt_t(ttgt)})")
+                elif p == 2: st.code(f"0%: {p0:.5f} ({fmt_t(t0)})\n100%: {p100:.5f} ({fmt_t(t100)}){tgt_str}")
+                elif p == 3 and tgt != 0: st.code(f"0%: {p0:.5f} ({fmt_t(t0)})\n100%: {p100:.5f} ({fmt_t(t100)}){tgt_str}")
             else:
                 if env_data and env_data['dir'] != "エラー":
                     sim_p, sim_c = env_data.get('sim_phase', 1), env_data.get('sim_cycle', 1)

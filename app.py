@@ -428,11 +428,14 @@ with st.expander("レーダーを展開する", expanded=False):
                         r_state["phase"], r_state["cycle"] = env_data.get("sim_phase", 1), env_data.get("sim_cycle", 1)
                         r_state["0_pct"], r_state["100_pct"] = env_data.get("sim_0_pct", 0), env_data.get("sim_100_pct", 0)
                         r_state["time_0"], r_state["time_100"] = env_data.get("time_0"), env_data.get("time_100")
+                        # 🌟 ここが抜けていました！押し安値の引き継ぎを追加！
+                        r_state["current_lowest"] = env_data.get("sim_cur_low", 0)
+                        r_state["current_lowest_time"] = env_data.get("sim_cur_low_t", "")
                     else:
                         r_state["phase"], r_state["cycle"], r_state["0_pct"], r_state["100_pct"] = 1, 1, 0, 0
+                        r_state["current_lowest"], r_state["current_lowest_time"] = 0, ""
                 else: r_state["phase"] = 0
                 data["radar"] = radar_data
                 save_data(data)
                 st.rerun()
         st.write("---")
-

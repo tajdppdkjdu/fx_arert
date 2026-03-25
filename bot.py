@@ -314,11 +314,14 @@ def main():
                 is_changed = True
                 continue
 
-            if is_buy:
-                if env["1h_l"] < state.get("current_lowest", env["1h_l"]):
-                    state["current_lowest"], state["current_lowest_time"] = env["1h_l"], time_now
+            # 🌟 エラー対策：データがない場合は現在のレートを強制セット
+            if "current_lowest" not in state or state["current_lowest"] == 0:
+                state["current_lowest"] = env["1h_l"] if is_buy else env["1h_h"]
+                state["current_lowest_time"] = time_now
             else:
-                if env["1h_h"] > state.get("current_lowest", env["1h_h"]):
+                if is_buy and env["1h_l"] < state["current_lowest"]:
+                    state["current_lowest"], state["current_lowest_time"] = env["1h_l"], time_now
+                elif not is_buy and env["1h_h"] > state["current_lowest"]:
                     state["current_lowest"], state["current_lowest_time"] = env["1h_h"], time_now
 
             if (is_buy and env["1h_h"] > state["0_pct"]) or (not is_buy and env["1h_l"] < state["0_pct"]):
@@ -356,7 +359,9 @@ def main():
             if state["phase"] == 3:
                 if state.get("notified_p3_count", 0) < 2:
                     range_diff = abs(state["0_pct"] - state["100_pct"])
-                    ret_pct = abs(state["0_pct"] - state["current_lowest"]) / range_diff * 100 if range_diff > 0 else 0
+                    # 🌟 エラー対策：データ取得を安全な形に変更
+                    cl = state.get('current_lowest', env["1h_l"] if is_buy else env["1h_h"])
+                    ret_pct = abs(state["0_pct"] - cl) / range_diff * 100 if range_diff > 0 else 0
                     tgt, ttgt = state.get('target_15m', 0), state.get('time_tgt', '')
                     cross_str = f" ({fmt_t(env.get('cross_time'))}〜)" if env.get('cross_time') else ""
                     msg = f"🔥 【③ｴﾝﾄﾘｰ待ち (第{state.get('cycle', 1)}ｻｲｸﾙ)】\n🌍 {pair_key} : {'🔴 買い目線' if is_buy else '🔵 売り目線'}{cross_str}\n15分足の戻り高値をブレイクしました！\n\n[基準レート]\nﾌﾞﾚｲｸ基準: {tgt:.5f} ({fmt_t(ttgt)})\n📉 押し目の深さ：{ret_pct:.1f}%\n\n今すぐチャートを確認してください！"

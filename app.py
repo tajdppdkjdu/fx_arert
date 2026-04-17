@@ -221,7 +221,7 @@ else:
             st.write(f"**{label}**")
             ctype = st.selectbox("種類", ["① 価格×価格", "② 価格×SMA", "③ SMA×SMA"], key=f"ctype_{label}")
             if ctype == "① 価格×価格":
-                price = st.number_input("目標価格", value=150.0, format="%.3f", key=f"price_{label}")
+                price = st.number_input("目標価格", value=0.00000, format="%.5f", key=f"price_{label}")
                 dir_ = st.selectbox("条件", ["上回る", "下回る", "交差"], key=f"dir_{label}")
                 return {"type": ctype, "target_price": price, "direction": dir_}
             elif ctype == "② 価格×SMA":
@@ -270,7 +270,7 @@ else:
         base_rate = None
         if "終了したら" in alert_sit:
             st.info("💡 終了判定の基準となるレートを入力してください。")
-            base_rate = st.number_input("基準レート", value=150.000, format="%.3f", key="base_rate")
+            base_rate = st.number_input("基準レート", value=0.00000, format="%.5f", key="base_rate")
         st.write("---")
         st.write("**⏱️ 制限設定（トレンドアラート）**")
         t_time_limit_mode = st.selectbox("時間制限", ["なし（1週間で自動無効）", "指定日時まで有効", "指定日時以降に有効"], key="t_time_mode")

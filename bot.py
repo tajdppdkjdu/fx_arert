@@ -159,7 +159,11 @@ def check_cross(prev_price, curr_high, curr_low, prev_target, curr_target, mode)
     return False
 
 def eval_cond(cond, pp, ch, cl, ps, cs):
-    if cond["type"] == "① 価格×価格": return check_cross(pp, ch, cl, cond["target_price"], cond["target_price"], cond["direction"])
+    if cond["type"] == "① 価格×価格":
+        t = cond["target_price"]
+        if cond["direction"] == "上回る": return ch > t
+        if cond["direction"] == "下回る": return cl < t
+        if cond["direction"] == "交差": return (pp <= t and ch > t) or (pp >= t and cl < t)
     elif cond["type"] == "② 価格×SMA": return check_cross(pp, ch, cl, ps[cond["target_sma"]], cs[cond["target_sma"]], cond["direction"])
     elif cond["type"] == "③ SMA×SMA": return check_cross(ps[cond["sma1"]], cs[cond["sma1"]], cs[cond["sma1"]], ps[cond["sma2"]], cs[cond["sma2"]], cond["direction"])
     return False

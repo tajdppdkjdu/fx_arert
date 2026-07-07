@@ -246,9 +246,12 @@ else:
             with col_d: limit_date = st.date_input("日付 (JST)")
             with col_tm: limit_time = st.time_input("時間 (JST)", value=(datetime.now() + timedelta(hours=1)).time())
             limit_dt = datetime.combine(limit_date, limit_time).isoformat()
+            
+        memo = st.text_input("一言メモ（空欄可）", placeholder="通知に追加したいメッセージを入力")
+
         if st.button("通常アラートを登録"):
             now_jst = datetime.utcnow() + timedelta(hours=9)
-            new_alert = {"type": "normal", "pair": pair, "tf": tf, "logic": logic, "cond_a": cond_a, "cond_b": cond_b, "created_at": now_jst.isoformat(), "max_count": max_count, "current_count": 0, "time_mode": time_limit_mode, "limit_dt": limit_dt}
+            new_alert = {"type": "normal", "pair": pair, "tf": tf, "logic": logic, "cond_a": cond_a, "cond_b": cond_b, "created_at": now_jst.isoformat(), "max_count": max_count, "current_count": 0, "time_mode": time_limit_mode, "limit_dt": limit_dt, "memo": memo}
             alerts.append(new_alert)
             data["alerts"] = alerts
             save_data(data)
@@ -356,49 +359,22 @@ for i, a in enumerate(alerts):
             default_logic = a.get('logic', "条件Aのみ")
             new_logic = st.selectbox("条件Bの追加", logic_opts, index=logic_opts.index(default_logic) if default_logic in logic_opts else 0, key=f"edit_logic_{i}")
             
-            new_cond_b = edit_cond_ui("条件B", a.get('cond_b')) if new_logic != "条件Aのみ" else None
+            if time_limit_mode != "なし（1週間で自動無効）":
+            col_d, col_tm = st.columns(2)
+            with col_d: limit_date = st.date_input("日付 (JST)")
+            with col_tm: limit_time = st.time_input("時間 (JST)", value=(datetime.now() + timedelta(hours=1)).time())
+            limit_dt = datetime.combine(limit_date, limit_time).isoformat()
             
-            col_save, col_cancel = st.columns([1, 1])
-            with col_save:
-                if st.button("💾 保存", key=f"save_{i}"):
-                    alerts[i]['tf'] = new_tf
-                    alerts[i]['cond_a'] = new_cond_a
-                    alerts[i]['logic'] = new_logic
-                    alerts[i]['cond_b'] = new_cond_b
-                    data["alerts"] = alerts
-                    save_data(data)
-                    st.session_state['edit_idx'] = None # 編集モードを終了
-                    st.success("更新しました！")
-                    st.rerun()
-            with col_cancel:
-                if st.button("❌ キャンセル", key=f"cancel_{i}"):
-                    st.session_state['edit_idx'] = None # 編集モードを終了
-                    st.rerun()
-        st.write("---")
-        continue # 編集モードの時は、下の通常の表示を行わない
+        memo = st.text_input("一言メモ（空欄可）", placeholder="通知に追加したいメッセージを入力")
 
-    # 🌟 通常の表示モード
-    try:
-        if a.get("type") == "trend":
-            st.markdown(f"**[{i+1}] 📈 トレンドアラート | {a.get('pair', '不明')} ({a.get('tf', '不明')})**")
-            st.write(f"状況設定: {a.get('situation', '不明')}")
-            if a.get('baseline_rate'): st.write(f"基準レート: {a['baseline_rate']:.3f} 割れ")
-            st.caption(f"⏱️ 期限: {fmt_limit(a)}")
-        else:
-            st.markdown(f"**[{i+1}] 🔔 通常アラート | {a.get('pair', '不明')} ({a.get('tf', '不明')})**")
-            def fmt_cond(c):
-                if not c: return "不明"
-                t, d = c.get('type', '不明'), c.get('direction', '不明')
-                if t == "① 価格×価格": return f"{t} : {c.get('target_price')} を {d}"
-                if t == "② 価格×SMA": return f"{t} : {c.get('target_sma')} を {d}"
-                if t == "③ SMA×SMA": return f"{t} : {c.get('sma1')} が {c.get('sma2')} を {d}"
-                return f"{t} ({d})"
-            st.write(f"A: {fmt_cond(a.get('cond_a'))}")
-            logic = a.get('logic', '条件Aのみ')
-            cond_b = a.get('cond_b')
-            if logic != "条件Aのみ" and cond_b is not None: st.write(f"{logic} \nB: {fmt_cond(cond_b)}")
-            remain = a.get('max_count', 1) - a.get('current_count', 0)
-            st.caption(f"⏱️ 期限: {fmt_limit(a)} ｜ 残り回数: {remain} / {a.get('max_count', 1)} 回")
+        if st.button("通常アラートを登録"):
+            now_jst = datetime.utcnow() + timedelta(hours=9)
+            new_alert = {"type": "normal", "pair": pair, "tf": tf, "logic": logic, "cond_a": cond_a, "cond_b": cond_b, "created_at": now_jst.isoformat(), "max_count": max_count, "current_count": 0, "time_mode": time_limit_mode, "limit_dt": limit_dt, "memo": memo}
+            alerts.append(new_alert)
+            data["alerts"] = alerts
+            save_data(data)
+            st.success("登録しました！")
+            st.rerun()
     except Exception:
         st.warning(f"**[{i+1}] ⚠️ 読み込みエラー**")
         

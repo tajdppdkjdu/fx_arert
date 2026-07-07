@@ -359,7 +359,7 @@ for i, a in enumerate(alerts):
             default_logic = a.get('logic', "条件Aのみ")
             new_logic = st.selectbox("条件Bの追加", logic_opts, index=logic_opts.index(default_logic) if default_logic in logic_opts else 0, key=f"edit_logic_{i}")
             
-            if time_limit_mode != "なし（1週間で自動無効）":
+    if time_limit_mode != "なし（1週間で自動無効）":
             col_d, col_tm = st.columns(2)
             with col_d: limit_date = st.date_input("日付 (JST)")
             with col_tm: limit_time = st.time_input("時間 (JST)", value=(datetime.now() + timedelta(hours=1)).time())

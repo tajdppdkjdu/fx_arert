@@ -375,10 +375,6 @@ for i, a in enumerate(alerts):
             save_data(data)
             st.success("登録しました！")
             st.rerun()
-    with col_btn2:
-        if st.button("編集", key=f"edit_{i}"):
-            st.session_state['edit_idx'] = i # このアラートを編集モードにする
-            st.rerun()
     st.write("---")
 
 st.divider()

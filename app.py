@@ -199,23 +199,22 @@ st.title("FX 自動アラートシステム")
 data = load_data()
 alerts = data.get("alerts", [])
 
-st.subheader("🔍 現在のレート確認")
-c1, c2 = st.columns([3, 1])
-with c1: check_pair = st.selectbox("通貨ペア", list(pairs.keys()), key="check")
-with c2: 
-    st.write("")
-    if st.button("取得"):
-        rate = get_current_rate(pairs[check_pair])
-        if rate: st.success(f"{check_pair} : {rate:.5f}")
-        else: st.error("取得失敗")
-
-st.divider()
-
 if len(alerts) >= MAX_ALERTS_LIMIT:
     st.warning(f"登録上限（{MAX_ALERTS_LIMIT}個）です。")
 else:
     with st.expander("🔔 通常アラート（価格・SMA）を設定する"):
-        pair = st.selectbox("通貨ペア", list(pairs.keys()), key="na_pair")
+        st.write("🔍 **現在のレート確認**")
+        c1, c2 = st.columns([3, 1])
+        with c1: pair = st.selectbox("通貨ペア", list(pairs.keys()), key="na_pair")
+        with c2: 
+            st.write("")
+            # ボタンのキーが重複しないように key="get_rate_btn" を追加しています
+            if st.button("取得", key="get_rate_btn"):
+                rate = get_current_rate(pairs[pair])
+                if rate: st.success(f"{pair} : {rate:.5f}")
+                else: st.error("取得失敗")
+                
+        st.write("---")
         tf = st.selectbox("時間足", ["5分足", "15分足", "1時間足", "4時間足"], key="na_tf")
         def cond_ui(label):
             st.write(f"**{label}**")

@@ -303,7 +303,81 @@ def fmt_limit(a):
     if tm == 'なし（1週間で自動無効）': return "1週間で無効"
     dt_str = datetime.fromisoformat(a['limit_dt']).strftime('%m/%d %H:%M')
     return f"{dt_str} まで有効" if tm == "指定日時まで有効" else f"{dt_str} 以降有効"
+
 for i, a in enumerate(alerts):
+    # 🌟 もしこのアラートが「編集モード」だったら、フォームを表示する
+    if st.session_state.get('edit_idx') == i:
+        st.markdown(f"**[{i+1}] ✏️ アラートの編集 | {a.get('pair', '不明')}**")
+        
+        if a.get("type") == "trend":
+            st.info("トレンドアラートの編集は現在サポートされていません。一度削除して再登録してください。")
+            if st.button("キャンセル", key=f"cancel_t_{i}"):
+                st.session_state['edit_idx'] = None
+                st.rerun()
+        else:
+            # 既存の値を初期値として読み込む処理
+            tf_opts = ["5分足", "15分足", "1時間足", "4時間足"]
+            current_tf = a.get('tf', "5分足")
+            new_tf = st.selectbox("時間足", tf_opts, index=tf_opts.index(current_tf) if current_tf in tf_opts else 0, key=f"edit_tf_{i}")
+            
+            def edit_cond_ui(label, default_cond):
+                st.write(f"**{label}**")
+                ctype_opts = ["① 価格×価格", "② 価格×SMA", "③ SMA×SMA"]
+                default_type = default_cond.get('type', "① 価格×価格") if default_cond else "① 価格×価格"
+                ctype = st.selectbox("種類", ctype_opts, index=ctype_opts.index(default_type) if default_type in ctype_opts else 0, key=f"edit_ctype_{label}_{i}")
+                
+                dir_opts = ["上回る", "下回る", "交差"]
+                default_dir = default_cond.get('direction', "上回る") if default_cond else "上回る"
+                dir_idx = dir_opts.index(default_dir) if default_dir in dir_opts else 0
+
+                if ctype == "① 価格×価格":
+                    default_price = default_cond.get('target_price', 150.0) if default_cond else 150.0
+                    price = st.number_input("目標価格", value=float(default_price), format="%.5f", key=f"edit_price_{label}_{i}")
+                    dir_ = st.selectbox("条件", dir_opts, index=dir_idx, key=f"edit_dir_{label}_{i}")
+                    return {"type": ctype, "target_price": price, "direction": dir_}
+                elif ctype == "② 価格×SMA":
+                    sma_opts = ["SMA6", "SMA25", "SMA100"]
+                    default_sma = default_cond.get('target_sma', "SMA6") if default_cond else "SMA6"
+                    sma = st.selectbox("SMA", sma_opts, index=sma_opts.index(default_sma) if default_sma in sma_opts else 0, key=f"edit_sma_{label}_{i}")
+                    dir_ = st.selectbox("条件", dir_opts, index=dir_idx, key=f"edit_dir2_{label}_{i}")
+                    return {"type": ctype, "target_sma": sma, "direction": dir_}
+                else:
+                    sma_opts = ["SMA6", "SMA25", "SMA100"]
+                    d_s1 = default_cond.get('sma1', "SMA6") if default_cond else "SMA6"
+                    d_s2 = default_cond.get('sma2', "SMA25") if default_cond else "SMA25"
+                    s1 = st.selectbox("SMA(主)", sma_opts, index=sma_opts.index(d_s1) if d_s1 in sma_opts else 0, key=f"edit_s1_{label}_{i}")
+                    s2 = st.selectbox("SMA(副)", sma_opts, index=sma_opts.index(d_s2) if d_s2 in sma_opts else 1, key=f"edit_s2_{label}_{i}")
+                    dir_ = st.selectbox("条件", dir_opts, index=dir_idx, key=f"edit_dir3_{label}_{i}")
+                    return {"type": ctype, "sma1": s1, "sma2": s2, "direction": dir_}
+            
+            new_cond_a = edit_cond_ui("条件A", a.get('cond_a'))
+            
+            logic_opts = ["条件Aのみ", "AND（条件A かつ 条件B）", "OR（条件A または 条件B）"]
+            default_logic = a.get('logic', "条件Aのみ")
+            new_logic = st.selectbox("条件Bの追加", logic_opts, index=logic_opts.index(default_logic) if default_logic in logic_opts else 0, key=f"edit_logic_{i}")
+            
+            new_cond_b = edit_cond_ui("条件B", a.get('cond_b')) if new_logic != "条件Aのみ" else None
+            
+            col_save, col_cancel = st.columns([1, 1])
+            with col_save:
+                if st.button("💾 保存", key=f"save_{i}"):
+                    alerts[i]['tf'] = new_tf
+                    alerts[i]['cond_a'] = new_cond_a
+                    alerts[i]['logic'] = new_logic
+                    alerts[i]['cond_b'] = new_cond_b
+                    data["alerts"] = alerts
+                    save_data(data)
+                    st.session_state['edit_idx'] = None # 編集モードを終了
+                    st.success("更新しました！")
+                    st.rerun()
+            with col_cancel:
+                if st.button("❌ キャンセル", key=f"cancel_{i}"):
+                    st.session_state['edit_idx'] = None # 編集モードを終了
+                    st.rerun()
+        st.write("---")
+        continue # 編集モードの時は、下の通常の表示を行わない
+
+    # 🌟 通常の表示モード
     try:
         if a.get("type") == "trend":
             st.markdown(f"**[{i+1}] 📈 トレンドアラート | {a.get('pair', '不明')} ({a.get('tf', '不明')})**")
@@ -327,11 +401,20 @@ for i, a in enumerate(alerts):
             st.caption(f"⏱️ 期限: {fmt_limit(a)} ｜ 残り回数: {remain} / {a.get('max_count', 1)} 回")
     except Exception:
         st.warning(f"**[{i+1}] ⚠️ 読み込みエラー**")
-    if st.button("削除", key=f"del_{i}"):
-        alerts.pop(i)
-        data["alerts"] = alerts
-        save_data(data)
-        st.rerun()
+        
+    # 🌟 ボタンを横並びに配置
+    col_btn1, col_btn2, _ = st.columns([1, 1, 3])
+    with col_btn1:
+        if st.button("削除", key=f"del_{i}"):
+            alerts.pop(i)
+            data["alerts"] = alerts
+            save_data(data)
+            st.rerun()
+    with col_btn2:
+        if st.button("編集", key=f"edit_{i}"):
+            st.session_state['edit_idx'] = i # このアラートを編集モードにする
+            st.rerun()
+    st.write("---")
 
 st.divider()
 st.subheader("🌍 環境認識＆手法レーダー (別枠監視)")

@@ -252,7 +252,10 @@ def main():
             if final_result:
                 alert['current_count'] = alert.get('current_count', 0) + 1
                 max_c = alert.get('max_count', 1)
-                msg = f"🚨【通常アラート】({alert['current_count']}/{max_c}回目)\n{alert['pair']} ({alert['tf']})\n現在値: {cp:.5f}\n(高値: {ch:.5f} / 安値: {cl:.5f})\n条件を満たしました！"
+                
+                memo_str = f"\n📝 メモ: {alert.get('memo')}\n" if alert.get('memo') else "\n"
+                
+                msg = f"🚨【通常アラート】({alert['current_count']}/{max_c}回目)\n{alert['pair']} ({alert['tf']})\n現在値: {cp:.5f}\n(高値: {ch:.5f} / 安値: {cl:.5f}){memo_str}条件を満たしました！"
                 send_line(msg)
                 is_changed = True
                 

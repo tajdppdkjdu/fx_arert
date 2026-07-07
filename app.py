@@ -358,13 +358,13 @@ for i, a in enumerate(alerts):
             logic_opts = ["条件Aのみ", "AND（条件A かつ 条件B）", "OR（条件A または 条件B）"]
             default_logic = a.get('logic', "条件Aのみ")
             new_logic = st.selectbox("条件Bの追加", logic_opts, index=logic_opts.index(default_logic) if default_logic in logic_opts else 0, key=f"edit_logic_{i}")
-            
-    if time_limit_mode != "なし（1週間で自動無効）":
+
+        if time_limit_mode != "なし（1週間で自動無効）":
             col_d, col_tm = st.columns(2)
             with col_d: limit_date = st.date_input("日付 (JST)")
             with col_tm: limit_time = st.time_input("時間 (JST)", value=(datetime.now() + timedelta(hours=1)).time())
             limit_dt = datetime.combine(limit_date, limit_time).isoformat()
-            
+
         memo = st.text_input("一言メモ（空欄可）", placeholder="通知に追加したいメッセージを入力")
 
         if st.button("通常アラートを登録"):
@@ -374,17 +374,6 @@ for i, a in enumerate(alerts):
             data["alerts"] = alerts
             save_data(data)
             st.success("登録しました！")
-            st.rerun()
-    except Exception:
-        st.warning(f"**[{i+1}] ⚠️ 読み込みエラー**")
-        
-    # 🌟 ボタンを横並びに配置
-    col_btn1, col_btn2, _ = st.columns([1, 1, 3])
-    with col_btn1:
-        if st.button("削除", key=f"del_{i}"):
-            alerts.pop(i)
-            data["alerts"] = alerts
-            save_data(data)
             st.rerun()
     with col_btn2:
         if st.button("編集", key=f"edit_{i}"):

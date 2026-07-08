@@ -247,7 +247,7 @@ else:
             with col_tm: limit_time = st.time_input("時間 (JST)", value=(datetime.now() + timedelta(hours=1)).time())
             limit_dt = datetime.combine(limit_date, limit_time).isoformat()
             
-        memo = st.text_input("一言メモ（空欄可）", placeholder="通知に追加したいメッセージを入力")
+        memo = st.text_area("一言メモ（空欄可）", placeholder="通知に追加したいメッセージを入力\n（複数行入力できます）", height=100)
 
         if st.button("通常アラートを登録"):
             now_jst = datetime.utcnow() + timedelta(hours=9)
@@ -361,7 +361,7 @@ for i, a in enumerate(alerts):
             new_cond_b = edit_cond_ui("条件B", a.get('cond_b')) if new_logic != "条件Aのみ" else None
             
             default_memo = a.get("memo", "")
-            new_memo = st.text_input("一言メモ（空欄可）", value=default_memo, key=f"edit_memo_{i}")
+            new_memo = st.text_area("一言メモ（空欄可）", value=default_memo, height=100, key=f"edit_memo_{i}")
             
             col_save, col_cancel = st.columns([1, 1])
             with col_save:

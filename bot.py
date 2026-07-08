@@ -168,6 +168,14 @@ def eval_cond(cond, pp, ch, cl, ps, cs):
     elif cond["type"] == "③ SMA×SMA": return check_cross(ps[cond["sma1"]], cs[cond["sma1"]], cs[cond["sma1"]], ps[cond["sma2"]], cs[cond["sma2"]], cond["direction"])
     return False
 
+def fmt_cond(c):
+    if not c: return "不明"
+    t, d = c.get('type', '不明'), c.get('direction', '不明')
+    if t == "① 価格×価格": return f"{t} : {c.get('target_price')} を {d}"
+    if t == "② 価格×SMA": return f"{t} : {c.get('target_sma')} を {d}"
+    if t == "③ SMA×SMA": return f"{t} : {c.get('sma1')} が {c.get('sma2')} を {d}"
+    return f"{t} ({d})"
+
 def main():
     now_jst = datetime.utcnow() + timedelta(hours=9)
     is_weekend = False
@@ -244,18 +252,42 @@ def main():
             ps = {"SMA6": gv(previous, 'SMA6'), "SMA25": gv(previous, 'SMA25'), "SMA100": gv(previous, 'SMA100')}
 
             result_a = eval_cond(alert['cond_a'], pp, ch, cl, ps, cs)
+            result_b = False
             final_result = result_a
             
-            if alert.get('logic') == "AND（条件A かつ 条件B）": final_result = result_a and eval_cond(alert['cond_b'], pp, ch, cl, ps, cs)
-            elif alert.get('logic') == "OR（条件A または 条件B）": final_result = result_a or eval_cond(alert['cond_b'], pp, ch, cl, ps, cs)
+            logic = alert.get('logic', '条件Aのみ')
+            if logic != "条件Aのみ" and alert.get('cond_b'):
+                result_b = eval_cond(alert['cond_b'], pp, ch, cl, ps, cs)
+                if logic == "AND（条件A かつ 条件B）":
+                    final_result = result_a and result_b
+                elif logic == "OR（条件A または 条件B）":
+                    final_result = result_a or result_b
 
             if final_result:
                 alert['current_count'] = alert.get('current_count', 0) + 1
                 max_c = alert.get('max_count', 1)
                 
-                memo_str = f"\n📝 メモ: {alert.get('memo')}\n" if alert.get('memo') else "\n"
+                # 設定された条件を文章化
+                cond_str = f"\n[発動条件]\nA: {fmt_cond(alert.get('cond_a'))}"
+                if logic != "条件Aのみ" and alert.get('cond_b'):
+                    logic_str = "【AND (かつ)】" if logic == "AND（条件A かつ 条件B）" else "【OR (または)】"
+                    cond_str += f"\n{logic_str}\nB: {fmt_cond(alert.get('cond_b'))}"
                 
-                msg = f"🚨【通常アラート】({alert['current_count']}/{max_c}回目)\n{alert['pair']} ({alert['tf']})\n現在値: {cp:.5f}\n(高値: {ch:.5f} / 安値: {cl:.5f}){memo_str}条件を満たしました！"
+                # ORなどの場合に、どちらを満たしたかを判定して文章化
+                judge_str = ""
+                if logic == "OR（条件A または 条件B）":
+                    if result_a and result_b: judge_str = "\n【判定結果】条件Aと条件Bを両方満たしました！"
+                    elif result_a: judge_str = "\n【判定結果】条件Aを満たしました！"
+                    elif result_b: judge_str = "\n【判定結果】条件Bを満たしました！"
+                elif logic == "AND（条件A かつ 条件B）":
+                    judge_str = "\n【判定結果】上記の条件をすべて満たしました！"
+                else:
+                    judge_str = "\n【判定結果】条件を満たしました！"
+                
+                memo_str = f"\n\n📝 メモ: {alert.get('memo')}" if alert.get('memo') else ""
+                
+                # すべてを合体させてLINEに送る
+                msg = f"🚨【通常アラート】({alert['current_count']}/{max_c}回目)\n{alert['pair']} ({alert['tf']})\n現在値: {cp:.5f}\n(高値: {ch:.5f} / 安値: {cl:.5f})\n{cond_str}{memo_str}\n{judge_str}"
                 send_line(msg)
                 is_changed = True
                 

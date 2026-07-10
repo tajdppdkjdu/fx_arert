@@ -233,7 +233,42 @@ else:
                 dir_ = st.selectbox("条件", ["上回る", "下回る", "交差"], key=f"dir3_{label}")
                 return {"type": ctype, "sma1": s1, "sma2": s2, "direction": dir_}
         cond_a = cond_ui("条件A")
-        sodai122714@icloud.com
+        # 各項目に key（名札）を追加しています
+        logic = st.selectbox("条件Bの追加", ["条件Aのみ", "AND（条件A かつ 条件B）", "OR（条件A または 条件B）"], key="na_logic")
+        cond_b = cond_ui("条件B") if logic != "条件Aのみ" else None
+        st.write("---")
+        st.write("**⏱️ 制限設定（通常アラート）**")
+        col_c, col_t = st.columns(2)
+        with col_c: max_count = st.number_input("通知の最大回数 (1〜5回)", min_value=1, max_value=5, value=1, key="na_max_count")
+        with col_t: time_limit_mode = st.selectbox("時間制限", ["なし（1週間で自動無効）", "指定日時まで有効", "指定日時以降に有効"], key="na_time_mode")
+        limit_dt = None
+        if time_limit_mode != "なし（1週間で自動無効）":
+            col_d, col_tm = st.columns(2)
+            with col_d: limit_date = st.date_input("日付 (JST)", key="na_limit_date")
+            with col_tm: limit_time = st.time_input("時間 (JST)", value=(datetime.now() + timedelta(hours=1)).time(), key="na_limit_time")
+            limit_dt = datetime.combine(limit_date, limit_time).isoformat()
+
+        memo = st.text_area("一言メモ（空欄可）", placeholder="通知に追加したいメッセージを入力\n（複数行入力できます）", height=100, key="na_memo")
+
+        if st.button("通常アラートを登録"):
+            now_jst = datetime.utcnow() + timedelta(hours=9)
+            new_alert = {"type": "normal", "pair": pair, "tf": tf, "logic": logic, "cond_a": cond_a, "cond_b": cond_b, "created_at": now_jst.isoformat(), "max_count": max_count, "current_count": 0, "time_mode": time_limit_mode, "limit_dt": limit_dt, "memo": memo}
+            alerts.append(new_alert)
+            data["alerts"] = alerts
+            save_data(data)
+            
+            # 🌟 ここで入力状態（記憶）をすべてリセットします！
+            keys_to_clear = [
+                "na_pair", "na_tf", "na_logic", "na_max_count", "na_time_mode", "na_limit_date", "na_limit_time", "na_memo",
+                "ctype_条件A", "price_条件A", "dir_条件A", "sma_条件A", "dir2_条件A", "s1_条件A", "s2_条件A", "dir3_条件A",
+                "ctype_条件B", "price_条件B", "dir_条件B", "sma_条件B", "dir2_条件B", "s1_条件B", "s2_条件B", "dir3_条件B"
+            ]
+            for k in keys_to_clear:
+                if k in st.session_state:
+                    del st.session_state[k]
+                    
+            st.success("登録しました！")
+            st.rerun()
 
     st.write("---")
     st.write("📈 **トレンドアラートを設定する**")

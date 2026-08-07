@@ -7,7 +7,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 
 GIST_ID = os.environ.get("GIST_ID")
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
+GIST_TOKEN = os.environ.get("GIST_TOKEN")
 LINE_TOKEN = os.environ.get("LINE_TOKEN")
 LINE_USER_ID = os.environ.get("LINE_USER_ID")
 MAX_ALERTS_LIMIT = 15

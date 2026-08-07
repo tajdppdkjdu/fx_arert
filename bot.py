@@ -209,7 +209,7 @@ def main():
     elif now_jst.weekday() == 6: is_weekend = True
     elif now_jst.weekday() == 0 and now_jst.hour < 6: is_weekend = True
 
-    #if is_weekend: return
+    if is_weekend: return
 
     data = load_data()
     is_changed = False

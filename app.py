@@ -26,7 +26,7 @@ pairs = {
 def load_data():
     url = f"https://api.github.com/gists/{GIST_ID}"
     headers = {
-        "Authorization": f"token {GITHUB_TOKEN}",
+        "Authorization": f"token {GIST_TOKEN}",
         "Accept": "application/vnd.github.v3+json",
     }
     try:
@@ -43,7 +43,7 @@ def load_data():
 def save_data(data):
     url = f"https://api.github.com/gists/{GIST_ID}"
     headers = {
-        "Authorization": f"token {GITHUB_TOKEN}",
+        "Authorization": f"token {GIST_TOKEN}",
         "Accept": "application/vnd.github.v3+json",
     }
     payload = {

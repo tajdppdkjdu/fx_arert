@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 LINE_TOKEN = os.environ.get("LINE_TOKEN")
 LINE_USER_ID = os.environ.get("LINE_USER_ID")
 GIST_ID = os.environ.get("GIST_ID")
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
+GIST_TOKEN = os.environ.get("GIST_TOKEN")
 
 
 pairs = {

@@ -2,12 +2,14 @@ import yfinance as yf
 import pandas as pd
 import requests
 import os
+import json
 from datetime import datetime, timedelta
 
 LINE_TOKEN = os.environ.get("LINE_TOKEN")
 LINE_USER_ID = os.environ.get("LINE_USER_ID")
-JSONBIN_ID = os.environ.get("JSONBIN_BIN_ID")
-JSONBIN_KEY = os.environ.get("JSONBIN_API_KEY")
+GIST_ID = os.environ.get("GIST_ID")
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
+
 
 pairs = {
     "USDJPY": "USDJPY=X", "EURJPY": "EURJPY=X", "GBPJPY": "GBPJPY=X",
@@ -25,16 +27,40 @@ def send_line(msg):
     requests.post(url, headers=headers, json={"to": LINE_USER_ID, "messages": [{"type": "text", "text": msg}]})
 
 def load_data():
-    url = f"https://api.jsonbin.io/v3/b/{JSONBIN_ID}"
-    headers = {"X-Master-Key": JSONBIN_KEY}
-    res = requests.get(url, headers=headers)
-    if res.status_code == 200: return res.json().get("record", {})
-    return {"alerts": [], "execution_logs": []}
+    url = f"https://api.github.com/gists/{GIST_ID}"
+    headers = {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+    try:
+        res = requests.get(url, headers=headers)
+        if res.status_code == 200:
+            data = res.json()
+            content = data["files"]["alerts.json"]["content"]
+            return json.loads(content)
+    except Exception as e:
+        pass
+    # エラー時や初回は空のデータを返す
+    return {"alerts": [], "execution_logs": [], "radar": {}}
 
 def save_data(data):
-    url = f"https://api.jsonbin.io/v3/b/{JSONBIN_ID}"
-    headers = {"X-Master-Key": JSONBIN_KEY, "Content-Type": "application/json"}
-    requests.put(url, headers=headers, json=data)
+    url = f"https://api.github.com/gists/{GIST_ID}"
+    headers = {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+    payload = {
+        "files": {
+            "alerts.json": {
+                "content": json.dumps(data, ensure_ascii=False, indent=2)
+            }
+        }
+    }
+    try:
+        requests.patch(url, headers=headers, json=payload)
+    except Exception as e:
+        pass
+
 
 cache_data = {}
 def get_cached_df(ticker, tf):
